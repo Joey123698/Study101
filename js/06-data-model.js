@@ -1,32 +1,50 @@
 /* ══════════════════════════════════════════════════════════════
    06-data-model.js — buildInit() + full migration chain
    ══════════════════════════════════════════════════════════════
-   V12 ARCHITECTURE CHANGE — Knowledge-based instead of Todo-based.
+   V12 → V12.1 ARCHITECTURE — Knowledge-based, Session-centered.
 
-   Naming: the OLD semester-wide "Phase" (Phase 1: Foundation & GPA,
-   spanning all courses, with goals[]/milestones[]) is renamed to
-   `uniPhases` / "Uni Phase" throughout — because the NEW per-course
-   structural unit (Foundation / Part A / Part B / Review inside ONE
-   course) now owns the name "Phase" (stored as `course.coursePhases`).
+   v12.1 revision (per user's approved spec): Concept is knowledge,
+   SESSION is the learning unit. A Concept can appear in many Sessions.
 
-   New per-course entities:
+   Naming: the OLD semester-wide "Phase" is `uniPhases` / "Uni Phase".
+   The per-course structural unit is `course.coursePhases` ("Phase").
+
+   Per-course entities:
      course.coursePhases: [{id,title,startDate,endDate,order}]
      course.chapters:     [{id,coursePhaseId,title}]
-     course.concepts:     [{id,chapterId,title,evals:[],objectiveIds:[],legacyDueDate,legacySubtasks}]
-     course.learningObjectives: [{id,text}]
+     course.concepts:     [{id,chapterId,title,touches:[],objectiveIds:[],
+                             prerequisiteConceptIds:[],  ← data model only, no UI yet
+                             legacyDueDate,legacySubtasks}]
+     course.concepts[].touches: [{understanding:1-5,confidence:1-5,timestamp,sessionId}]
+       — replaces old single-score `evals[]`. Mastery is derived from this
+         history via configurable EMA — see 04-mastery-engine.js.
+     course.sessions: [{id,title,estimatedDuration,objectives:[],conceptIds:[],
+                         resources:[],customTodos:[],status}]
+       — Session blueprint (what a study session SHOULD cover). status is a
+         lifecycle: 'draft'|'planned'|'in_progress'|'completed'|'reviewed'.
+     course.sessions[].objectives: [{id,text,description,expectedOutcome,
+                         conceptIds:[],estimatedTime,assessmentCriteria}]
+       — Learning Objectives now live INSIDE Session (moved from course-level).
+     course.legacyLearningObjectives: [{id,text}]  ← preserved, inert (old
+         course-level objectives from before this move)
      course.attendance: {}   ← UNCHANGED, deliberately kept separate from
-                                 StudySession (classroom attendance vs.
-                                 self-study are different behaviors — see
-                                 design discussion)
+                                 Session (classroom attendance vs. self-study)
 
-   New global entities:
-     data.studyPlans:    [{id,courseId,title,estimatedDuration,order,conceptIds,todos}]  (blueprint — Phase 2 UI)
-     data.studySessions: [{id,studyPlanId,courseId,date,startTime,endTime,duration,
-                            status,notes,reflection,quizScore,todos:[],conceptEvals:[]}] (execution — Phase 2 UI)
+   Global entities:
+     data.journalEntries: [{id,date,courseId,sessionId,duration,reflection,
+                             questionsRaised,actionItems:[{id,text,done}],
+                             confidenceAfter,difficulty,notes,
+                             conceptTouches:[{conceptId,understanding,confidence}],
+                             checklist:[{id,text,done}],status}]
+       — ONE entry per Session Instance (execution). Renamed from the
+         earlier studyPlans/studySessions placeholder shape (never had UI,
+         safe rename). Analytics reads from here, never from manual %.
+     data.masterySettings: emaAlpha, understandingWeight, confidenceWeight,
+         staleDays, examSoonDays, reviewW_* — all configurable (Settings UI),
+         see DEFAULT_MASTERY_SETTINGS in 04-mastery-engine.js.
 
-   Legacy fields are NEVER destroyed — old topics/tasks are renamed to
-   legacyTopics/legacyTasks and kept inert, so no data is lost even
-   though the new UI no longer reads them directly.
+   Legacy fields are NEVER destroyed — old topics/tasks/evals/learningObjectives
+   survive renamed with a `legacy`/`legacyX` prefix, kept inert.
    ══════════════════════════════════════════════════════════════ */
 
 const CAT_META=[['grammar','📖','Ngữ pháp','Điểm ngữ pháp mới...'],['vocabulary','📝','Từ vựng','(xem block riêng bên dưới)'],['speaking','🗣️','Nói','Topic đã luyện nói...'],['writing','✍️','Viết','Bài viết / essay...']];
@@ -82,10 +100,12 @@ function migrateToV6(d){
   return d;
 }
 
-/* ── V12: THE BIG ONE — Todo-based → Knowledge-based restructure ──
-   Idempotent: safe to run on already-migrated data (checks course.concepts
-   existence before converting). Never destroys old data — old topics/tasks
-   survive renamed as legacyTopics/legacyTasks. */
+/* ── V12/V12.1: THE BIG ONE — Todo-based → Knowledge-based → Session-centered ──
+   Idempotent per-step: safe to run repeatedly, safe to run on data that's
+   already partially migrated (e.g. this user's live Firestore data already
+   has Concepts with populated `evals` from real Quick-Eval usage in v12 —
+   step 2b below converts that forward to `touches`, it does NOT get skipped
+   just because `concepts` already exists). Never destroys old data. */
 function migrateToV12(d){
   if(!d)return d;
   d=migrateToV6(d);
@@ -95,56 +115,74 @@ function migrateToV12(d){
   if(d.currentPhaseId!==undefined&&d.currentUniPhaseId===undefined){d.currentUniPhaseId=d.currentPhaseId;delete d.currentPhaseId;}
   if(!d.uniPhases)d.uniPhases=[];
 
-  // 2. Per-course restructure: topics[] → coursePhases/chapters/concepts
   if(d.courses)d.courses=d.courses.map(c=>{
-    if(c.concepts)return c; // already migrated — idempotent guard
-    const oldTopics=c.topics||[];
-    const oldTasks=c.tasks||[];
+    let course=c;
 
-    // Group old topics by their `sec` field (existing section grouping) into Chapters.
-    // If a course already has `sections[]` (v6+), use those names/order; otherwise
-    // derive section names from whatever `sec` values appear on topics.
-    const secNames=(c.sections&&c.sections.length)
-      ? c.sections.map(s=>s.name)
-      : [...new Set(oldTopics.map(t=>t.sec).filter(Boolean))];
-    const finalSecNames=secNames.length?secNames:['Chưa phân loại'];
+    // 2a. Structural: topics[] → coursePhases/chapters/concepts (skip if already done)
+    if(!course.concepts){
+      const oldTopics=course.topics||[];
+      const oldTasks=course.tasks||[];
+      const secNames=(course.sections&&course.sections.length)
+        ? course.sections.map(s=>s.name)
+        : [...new Set(oldTopics.map(t=>t.sec).filter(Boolean))];
+      const finalSecNames=secNames.length?secNames:['Chưa phân loại'];
+      const coursePhaseId='cp_'+course.id+'_legacy';
+      const coursePhases=[{id:coursePhaseId,title:'📥 Nhập từ hệ thống cũ',startDate:'',endDate:course.examDate||course.endDate||'',order:0}];
+      const chapters=finalSecNames.map((name,i)=>({id:'ch_'+course.id+'_'+i,coursePhaseId,title:name}));
+      const chapterByName={};chapters.forEach(ch=>{chapterByName[ch.title]=ch.id;});
+      const fallbackChapterId=chapterByName['Chưa phân loại']||chapters[0]?.id;
+      const concepts=oldTopics.map((t,i)=>{
+        const chId=chapterByName[t.sec]||fallbackChapterId;
+        // Already-completed topics get a starting touch so they don't show mastery 0
+        // — a rough estimate (Understanding 4, Confidence 3), user should re-rate via a real touch.
+        const touches=t.done?[{understanding:4,confidence:3,timestamp:Date.now()-((oldTopics.length-i)*86400000),sessionId:null,legacy:true}]:[];
+        return{id:'cn_'+course.id+'_'+i,chapterId:chId,title:t.label,touches,objectiveIds:[],prerequisiteConceptIds:[],legacyDueDate:t.dueDate||'',legacySubtasks:t.subtasks||[]};
+      });
+      course={...course,coursePhases,chapters,concepts,legacyTopics:oldTopics,legacyTasks:oldTasks,topics:undefined,tasks:undefined};
+    }
 
-    const coursePhaseId='cp_'+c.id+'_legacy';
-    const coursePhases=[{id:coursePhaseId,title:'📥 Nhập từ hệ thống cũ',startDate:'',endDate:c.examDate||c.endDate||'',order:0}];
+    // 2b. Per-concept: evals[] (old single-score) → touches[] (Understanding+Confidence).
+    //     Runs even if `concepts` already existed (e.g. this user's live v12 data with
+    //     real Quick-Eval history) — converts forward, does not skip.
+    course={...course,concepts:(course.concepts||[]).map(cn=>{
+      if(cn.touches)return{...cn,prerequisiteConceptIds:cn.prerequisiteConceptIds||[]}; // already v12.1 — just backfill new field
+      const oldEvals=cn.evals||[];
+      const touches=oldEvals.map(e=>({
+        understanding:e.score!==undefined?Math.max(1,Math.min(5,Math.round(e.score/20))):3,
+        confidence:e.confidence||3,timestamp:e.timestamp,sessionId:e.sessionId||null,legacy:true,
+      }));
+      return{...cn,touches,evals:undefined,prerequisiteConceptIds:cn.prerequisiteConceptIds||[]};
+    })};
 
-    const chapters=finalSecNames.map((name,i)=>({id:'ch_'+c.id+'_'+i,coursePhaseId,title:name}));
-    const chapterByName={};chapters.forEach(ch=>{chapterByName[ch.title]=ch.id;});
-    const fallbackChapterId=chapterByName['Chưa phân loại']||chapters[0]?.id;
+    // 2c. Learning Objectives move from Course-level into Session-level (per approved spec).
+    //     Old course.learningObjectives preserved inert as legacyLearningObjectives.
+    if(course.learningObjectives&&!course.legacyLearningObjectives){
+      course={...course,legacyLearningObjectives:course.learningObjectives,learningObjectives:undefined};
+    }
+    if(!course.sessions)course={...course,sessions:[]}; // Session blueprints — Bước 2 builds the editor UI
 
-    const concepts=oldTopics.map((t,i)=>{
-      const chId=chapterByName[t.sec]||fallbackChapterId;
-      // Give already-completed topics a starting eval so they don't show mastery 0
-      // — clearly a rough estimate, user should re-evaluate via Quick Eval.
-      const evals=t.done?[{score:75,confidence:3,timestamp:Date.now()-((oldTopics.length-i)*86400000),sessionId:null,legacy:true}]:[];
-      return{
-        id:'cn_'+c.id+'_'+i,chapterId:chId,title:t.label,evals,objectiveIds:[],
-        legacyDueDate:t.dueDate||'',legacySubtasks:t.subtasks||[]
-      };
-    });
-
-    return{
-      ...c,
-      coursePhases,chapters,concepts,
-      learningObjectives:c.learningObjectives||[],
-      legacyTopics:oldTopics,   // preserved, inert — not read by new UI
-      legacyTasks:oldTasks,     // preserved, inert — "task lẻ" retired per user decision
-      topics:undefined,tasks:undefined,
-    };
+    return course;
   });
 
-  // 3. Global Study Plan / Study Session shape (blueprint vs execution — Phase 2 builds the UI,
-  //    but the shape must exist now so no further migration is needed later).
-  if(!d.studyPlans)d.studyPlans=[];
-  if(!d.studySessions)d.studySessions=[];
-  // Keep legacy studyJournal inert too — Phase 2 will offer an optional one-time
-  // "convert old journal entries into StudySession records" tool, not automatic,
-  // since journal entries don't cleanly map to a single StudyPlan.
-  if(!d.masterySettings)d.masterySettings={alpha:MASTERY_ALPHA_DEFAULT};
+  // 3. Global Journal Entries (execution instances) — renamed from the earlier
+  //    studyPlans/studySessions placeholder shape, which never had UI built on it
+  //    (safe direct rename). Preserved inert under legacy* just in case.
+  if(!d.journalEntries){
+    d.journalEntries=d.studySessions&&d.studySessions.length?d.studySessions:[];
+  }
+  if(d.studyPlans&&d.studyPlans.length&&!d.legacyStudyPlans)d.legacyStudyPlans=d.studyPlans;
+  if(d.studySessions&&d.studySessions.length&&!d.legacyStudySessions)d.legacyStudySessions=d.studySessions;
+  delete d.studyPlans;delete d.studySessions;
+
+  // 4. Mastery settings — merge forward, converting old `alpha` key name to `emaAlpha`,
+  //    and backfilling any new configurable weight that didn't exist before.
+  const oldMs=d.masterySettings||{};
+  d.masterySettings={
+    ...DEFAULT_MASTERY_SETTINGS,
+    ...oldMs,
+    emaAlpha:oldMs.emaAlpha??oldMs.alpha??DEFAULT_MASTERY_SETTINGS.emaAlpha,
+    alpha:undefined,
+  };
 
   return d;
 }
@@ -163,18 +201,19 @@ courses:[
     coursePhases:[{id:'cp_micro_a',title:'Part A',startDate:'',endDate:'2026-07-08',order:0},{id:'cp_micro_b',title:'Part B',startDate:'',endDate:'2026-07-20',order:1}],
     chapters:[{id:'ch_micro_1',coursePhaseId:'cp_micro_a',title:'MLE & Discrete Choice'},{id:'ch_micro_2',coursePhaseId:'cp_micro_b',title:'Causal Inference'}],
     concepts:[
-      {id:'cn_micro_1',chapterId:'ch_micro_1',title:'Maximum-Likelihood Estimation',evals:[],objectiveIds:[],legacyDueDate:'2026-06-25',legacySubtasks:[]},
-      {id:'cn_micro_2',chapterId:'ch_micro_1',title:'Binary Outcome Models (Logit/Probit)',evals:[],objectiveIds:[],legacyDueDate:'2026-07-01',legacySubtasks:[]},
-      {id:'cn_micro_3',chapterId:'ch_micro_1',title:'Multinomial & Count Data',evals:[],objectiveIds:[],legacyDueDate:'2026-07-05',legacySubtasks:[]},
-      {id:'cn_micro_4',chapterId:'ch_micro_1',title:'Limited Dependent Variables',evals:[],objectiveIds:[],legacyDueDate:'2026-07-08',legacySubtasks:[]},
-      {id:'cn_micro_5',chapterId:'ch_micro_2',title:'Causal Diagrams (DAGs)',evals:[],objectiveIds:[],legacyDueDate:'2026-07-10',legacySubtasks:[]},
-      {id:'cn_micro_6',chapterId:'ch_micro_2',title:'Machine Learning for Causal Inference',evals:[],objectiveIds:[],legacyDueDate:'2026-07-12',legacySubtasks:[]},
-      {id:'cn_micro_7',chapterId:'ch_micro_2',title:'Propensity Score Matching',evals:[],objectiveIds:[],legacyDueDate:'2026-07-14',legacySubtasks:[]},
-      {id:'cn_micro_8',chapterId:'ch_micro_2',title:'Instrumental Variables',evals:[],objectiveIds:[],legacyDueDate:'2026-07-16',legacySubtasks:[]},
-      {id:'cn_micro_9',chapterId:'ch_micro_2',title:'Difference-in-Differences',evals:[],objectiveIds:[],legacyDueDate:'2026-07-18',legacySubtasks:[]},
-      {id:'cn_micro_10',chapterId:'ch_micro_2',title:'Regression Discontinuity',evals:[],objectiveIds:[],legacyDueDate:'2026-07-20',legacySubtasks:[]},
+      {id:'cn_micro_1',chapterId:'ch_micro_1',title:'Maximum-Likelihood Estimation',touches:[],objectiveIds:[],prerequisiteConceptIds:[],legacyDueDate:'2026-06-25',legacySubtasks:[]},
+      {id:'cn_micro_2',chapterId:'ch_micro_1',title:'Binary Outcome Models (Logit/Probit)',touches:[],objectiveIds:[],prerequisiteConceptIds:[],legacyDueDate:'2026-07-01',legacySubtasks:[]},
+      {id:'cn_micro_3',chapterId:'ch_micro_1',title:'Multinomial & Count Data',touches:[],objectiveIds:[],prerequisiteConceptIds:[],legacyDueDate:'2026-07-05',legacySubtasks:[]},
+      {id:'cn_micro_4',chapterId:'ch_micro_1',title:'Limited Dependent Variables',touches:[],objectiveIds:[],prerequisiteConceptIds:[],legacyDueDate:'2026-07-08',legacySubtasks:[]},
+      {id:'cn_micro_5',chapterId:'ch_micro_2',title:'Causal Diagrams (DAGs)',touches:[],objectiveIds:[],prerequisiteConceptIds:[],legacyDueDate:'2026-07-10',legacySubtasks:[]},
+      {id:'cn_micro_6',chapterId:'ch_micro_2',title:'Machine Learning for Causal Inference',touches:[],objectiveIds:[],prerequisiteConceptIds:[],legacyDueDate:'2026-07-12',legacySubtasks:[]},
+      {id:'cn_micro_7',chapterId:'ch_micro_2',title:'Propensity Score Matching',touches:[],objectiveIds:[],prerequisiteConceptIds:[],legacyDueDate:'2026-07-14',legacySubtasks:[]},
+      {id:'cn_micro_8',chapterId:'ch_micro_2',title:'Instrumental Variables',touches:[],objectiveIds:[],prerequisiteConceptIds:[],legacyDueDate:'2026-07-16',legacySubtasks:[]},
+      {id:'cn_micro_9',chapterId:'ch_micro_2',title:'Difference-in-Differences',touches:[],objectiveIds:[],prerequisiteConceptIds:[],legacyDueDate:'2026-07-18',legacySubtasks:[]},
+      {id:'cn_micro_10',chapterId:'ch_micro_2',title:'Regression Discontinuity',touches:[],objectiveIds:[],prerequisiteConceptIds:[],legacyDueDate:'2026-07-20',legacySubtasks:[]},
     ],
-    learningObjectives:[
+    sessions:[],
+    legacyLearningObjectives:[
       {id:'lo_micro_1',text:'Giải thích tại sao OLS thất bại với biến phụ thuộc nhị phân'},
       {id:'lo_micro_2',text:'Derive Logit likelihood function'},
       {id:'lo_micro_3',text:'Diễn giải marginal effects đúng cách'},
@@ -184,36 +223,36 @@ courses:[
     coursePhases:[{id:'cp_ipe_1',title:'Day 1 — Presentation',startDate:'',endDate:'2026-07-09',order:0},{id:'cp_ipe_2',title:'Day 2 — Simulation',startDate:'',endDate:'2026-07-10',order:1}],
     chapters:[{id:'ch_ipe_1',coursePhaseId:'cp_ipe_1',title:'Group Presentation'},{id:'ch_ipe_2',coursePhaseId:'cp_ipe_2',title:'Simulation Game'}],
     concepts:[
-      {id:'cn_ipe_1',chapterId:'ch_ipe_1',title:'Presentation slides content',evals:[],objectiveIds:[],legacyDueDate:'2026-07-08',legacySubtasks:[]},
-      {id:'cn_ipe_2',chapterId:'ch_ipe_1',title:'Delivery / luyện thuyết trình',evals:[],objectiveIds:[],legacyDueDate:'2026-07-08',legacySubtasks:[]},
-      {id:'cn_ipe_3',chapterId:'ch_ipe_2',title:'Luật chơi simulation',evals:[],objectiveIds:[],legacyDueDate:'2026-07-09',legacySubtasks:[]},
-      {id:'cn_ipe_4',chapterId:'ch_ipe_2',title:'Chiến lược vai trò trong game',evals:[],objectiveIds:[],legacyDueDate:'2026-07-09',legacySubtasks:[]},
+      {id:'cn_ipe_1',chapterId:'ch_ipe_1',title:'Presentation slides content',touches:[],objectiveIds:[],prerequisiteConceptIds:[],legacyDueDate:'2026-07-08',legacySubtasks:[]},
+      {id:'cn_ipe_2',chapterId:'ch_ipe_1',title:'Delivery / luyện thuyết trình',touches:[],objectiveIds:[],prerequisiteConceptIds:[],legacyDueDate:'2026-07-08',legacySubtasks:[]},
+      {id:'cn_ipe_3',chapterId:'ch_ipe_2',title:'Luật chơi simulation',touches:[],objectiveIds:[],prerequisiteConceptIds:[],legacyDueDate:'2026-07-09',legacySubtasks:[]},
+      {id:'cn_ipe_4',chapterId:'ch_ipe_2',title:'Chiến lược vai trò trong game',touches:[],objectiveIds:[],prerequisiteConceptIds:[],legacyDueDate:'2026-07-09',legacySubtasks:[]},
     ],
-    learningObjectives:[],legacyTopics:[],legacyTasks:[]},
+    sessions:[],legacyLearningObjectives:[],legacyTopics:[],legacyTasks:[]},
   {id:'gse',name:'Global Sustainability Econ',emoji:'🌱',color:'#1D9E75',risk:'medium',schedule:'Thứ 5, 16:00–18:00',examDate:null,endDate:'2026-07-24',nextAction:'Viết Skill Development Plan (nháp 1)',note:'2 phần: Skill Development + Presentation & debate.',archived:false,ects:6,grade:null,notes:[],instructor:'',contact:'',location:'',sections:[],attendance:{},
     coursePhases:[{id:'cp_gse_1',title:'Lecture Series',startDate:'',endDate:'2026-07-24',order:0},{id:'cp_gse_2',title:'Assessment',startDate:'',endDate:'2026-07-24',order:1}],
     chapters:[{id:'ch_gse_1',coursePhaseId:'cp_gse_1',title:'Core Lectures'},{id:'ch_gse_2',coursePhaseId:'cp_gse_2',title:'Assessed Work'}],
     concepts:[
-      {id:'cn_gse_1',chapterId:'ch_gse_1',title:'Introduction to Sustainability Econ',evals:[{score:75,confidence:4,timestamp:Date.now()-8640000*9,sessionId:null,legacy:true}],objectiveIds:[],legacyDueDate:'',legacySubtasks:[]},
-      {id:'cn_gse_2',chapterId:'ch_gse_1',title:'Complexity Economics',evals:[{score:75,confidence:4,timestamp:Date.now()-8640000*8,sessionId:null,legacy:true}],objectiveIds:[],legacyDueDate:'',legacySubtasks:[]},
-      {id:'cn_gse_3',chapterId:'ch_gse_1',title:'SDGs Framework',evals:[{score:75,confidence:4,timestamp:Date.now()-8640000*7,sessionId:null,legacy:true}],objectiveIds:[],legacyDueDate:'',legacySubtasks:[]},
-      {id:'cn_gse_4',chapterId:'ch_gse_1',title:'Sustainability Ethics',evals:[],objectiveIds:[],legacyDueDate:'2026-06-26',legacySubtasks:[]},
-      {id:'cn_gse_5',chapterId:'ch_gse_2',title:'Skill Development Plan',evals:[],objectiveIds:[],legacyDueDate:'2026-07-01',legacySubtasks:[]},
-      {id:'cn_gse_6',chapterId:'ch_gse_2',title:'Group Presentation & Debate',evals:[],objectiveIds:[],legacyDueDate:'2026-07-24',legacySubtasks:[]},
+      {id:'cn_gse_1',chapterId:'ch_gse_1',title:'Introduction to Sustainability Econ',touches:[{understanding:4,confidence:4,timestamp:Date.now()-8640000*9,sessionId:null,legacy:true}],objectiveIds:[],prerequisiteConceptIds:[],legacyDueDate:'',legacySubtasks:[]},
+      {id:'cn_gse_2',chapterId:'ch_gse_1',title:'Complexity Economics',touches:[{understanding:4,confidence:4,timestamp:Date.now()-8640000*8,sessionId:null,legacy:true}],objectiveIds:[],prerequisiteConceptIds:[],legacyDueDate:'',legacySubtasks:[]},
+      {id:'cn_gse_3',chapterId:'ch_gse_1',title:'SDGs Framework',touches:[{understanding:4,confidence:4,timestamp:Date.now()-8640000*7,sessionId:null,legacy:true}],objectiveIds:[],prerequisiteConceptIds:[],legacyDueDate:'',legacySubtasks:[]},
+      {id:'cn_gse_4',chapterId:'ch_gse_1',title:'Sustainability Ethics',touches:[],objectiveIds:[],prerequisiteConceptIds:[],legacyDueDate:'2026-06-26',legacySubtasks:[]},
+      {id:'cn_gse_5',chapterId:'ch_gse_2',title:'Skill Development Plan',touches:[],objectiveIds:[],prerequisiteConceptIds:[],legacyDueDate:'2026-07-01',legacySubtasks:[]},
+      {id:'cn_gse_6',chapterId:'ch_gse_2',title:'Group Presentation & Debate',touches:[],objectiveIds:[],prerequisiteConceptIds:[],legacyDueDate:'2026-07-24',legacySubtasks:[]},
     ],
-    learningObjectives:[],legacyTopics:[],legacyTasks:[]},
+    sessions:[],legacyLearningObjectives:[],legacyTopics:[],legacyTasks:[]},
   {id:'macro',name:'Macroeconomics',emoji:'📈',color:'#7C6EF5',risk:'medium',schedule:'T2 16–18h | T3 12–14h',examDate:null,endDate:'2026-07-25',nextAction:'Ôn chắc Ramsey model',note:'Kiến thức thực tế mới đến nửa Ramsey. Catch up!',archived:false,ects:6,grade:null,notes:[],instructor:'',contact:'',location:'',sections:[],attendance:{},
     coursePhases:[{id:'cp_macro_1',title:'Growth Models',startDate:'',endDate:'2026-07-14',order:0},{id:'cp_macro_2',title:'Business Cycles',startDate:'',endDate:'2026-07-25',order:1}],
     chapters:[{id:'ch_macro_1',coursePhaseId:'cp_macro_1',title:'Solow–Ramsey'},{id:'ch_macro_2',coursePhaseId:'cp_macro_2',title:'RBC / DSGE & Cycles'}],
     concepts:[
-      {id:'cn_macro_1',chapterId:'ch_macro_1',title:'Solow Growth Model',evals:[{score:80,confidence:4,timestamp:Date.now()-8640000*10,sessionId:null,legacy:true}],objectiveIds:[],legacyDueDate:'',legacySubtasks:[]},
-      {id:'cn_macro_2',chapterId:'ch_macro_1',title:'Ramsey Model',evals:[{score:70,confidence:3,timestamp:Date.now()-8640000*9,sessionId:null,legacy:true}],objectiveIds:[],legacyDueDate:'2026-06-24',legacySubtasks:[]},
-      {id:'cn_macro_3',chapterId:'ch_macro_2',title:'RBC / DSGE',evals:[{score:75,confidence:3,timestamp:Date.now()-8640000*8,sessionId:null,legacy:true}],objectiveIds:[],legacyDueDate:'2026-07-01',legacySubtasks:[]},
-      {id:'cn_macro_4',chapterId:'ch_macro_2',title:'System Dynamics',evals:[],objectiveIds:[],legacyDueDate:'2026-06-23',legacySubtasks:[]},
-      {id:'cn_macro_5',chapterId:'ch_macro_2',title:'Goodwin–Minsky–Keen',evals:[],objectiveIds:[],legacyDueDate:'2026-07-25',legacySubtasks:[]},
-      {id:'cn_macro_6',chapterId:'ch_macro_2',title:'Business Cycles & Modeling Process',evals:[],objectiveIds:[],legacyDueDate:'2026-07-25',legacySubtasks:[]},
+      {id:'cn_macro_1',chapterId:'ch_macro_1',title:'Solow Growth Model',touches:[{understanding:4,confidence:4,timestamp:Date.now()-8640000*10,sessionId:null,legacy:true}],objectiveIds:[],prerequisiteConceptIds:[],legacyDueDate:'',legacySubtasks:[]},
+      {id:'cn_macro_2',chapterId:'ch_macro_1',title:'Ramsey Model',touches:[{understanding:4,confidence:3,timestamp:Date.now()-8640000*9,sessionId:null,legacy:true}],objectiveIds:[],prerequisiteConceptIds:[],legacyDueDate:'2026-06-24',legacySubtasks:[]},
+      {id:'cn_macro_3',chapterId:'ch_macro_2',title:'RBC / DSGE',touches:[{understanding:4,confidence:3,timestamp:Date.now()-8640000*8,sessionId:null,legacy:true}],objectiveIds:[],prerequisiteConceptIds:[],legacyDueDate:'2026-07-01',legacySubtasks:[]},
+      {id:'cn_macro_4',chapterId:'ch_macro_2',title:'System Dynamics',touches:[],objectiveIds:[],prerequisiteConceptIds:[],legacyDueDate:'2026-06-23',legacySubtasks:[]},
+      {id:'cn_macro_5',chapterId:'ch_macro_2',title:'Goodwin–Minsky–Keen',touches:[],objectiveIds:[],prerequisiteConceptIds:[],legacyDueDate:'2026-07-25',legacySubtasks:[]},
+      {id:'cn_macro_6',chapterId:'ch_macro_2',title:'Business Cycles & Modeling Process',touches:[],objectiveIds:[],prerequisiteConceptIds:[],legacyDueDate:'2026-07-25',legacySubtasks:[]},
     ],
-    learningObjectives:[],legacyTopics:[],legacyTasks:[]}
+    sessions:[],legacyLearningObjectives:[],legacyTopics:[],legacyTasks:[]}
 ],
 languages:[
   {id:'de',name:'Tiếng Đức',emoji:'🇩🇪',color:'#FFD700',level:'B2 (đã quên nhiều)',target:'B2+ / C1',schedule:'T4 & T6, 12:00–13:30',classDOW:[3,5],selfMin:30,note:'Ưu tiên nói và nghe',resources:['Lớp học','Deutsche Welle','Duolingo'],log:{},
@@ -229,8 +268,7 @@ habits:[
   {id:'h5',name:'Uống đủ 2L nước',emoji:'💧',color:'#4FA3FF',completions:{},archived:false}
 ],
 studyLog:[],
-studyPlans:[],
-studySessions:[],
+journalEntries:[],
 events:[
   {id:'ev1',title:'SprachCafe',date:'2026-06-17',time:'18:00',emoji:'🗣️',type:'language',note:'Networking với người bản ngữ'},
   {id:'ev2',title:'Swimming',date:'2026-06-17',time:'14:00',emoji:'🏊',type:'health',note:'Thứ 3 hàng tuần'},
@@ -250,7 +288,7 @@ dailyPerf:{},
 gamification:{xp:0,achievements:[]},
 timerCategories:[],
 settings:{theme:'purple',radius:'rounded',fontFamily:'system',bannerUrl:'',userName:''},
-masterySettings:{alpha:MASTERY_ALPHA_DEFAULT},
+masterySettings:{...DEFAULT_MASTERY_SETTINGS},
 parkingLot:[{id:'p1',text:'Tìm công cụ AI hỗ trợ học Econometrics',date:TODAY},{id:'p2',text:'Cập nhật CV cho Phase 2',date:TODAY}],
 parkingTasks:[{id:'pt1',text:'Tìm công cụ AI hỗ trợ học Econometrics',category:'Học tập',deadline:'',done:false,date:TODAY},{id:'pt2',text:'Cập nhật CV cho Phase 2',category:'Công việc',deadline:'2026-08-01',done:false,date:TODAY}],
 parkingNotes:[],

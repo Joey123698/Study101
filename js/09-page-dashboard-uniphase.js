@@ -163,7 +163,7 @@ function DashboardPage({data,upd,nav,awardXP}){
       <button className="btn-g btn-sm" onClick={()=>nav('courses')}>Tất cả →</button>
     </div>
     <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:6}}>
-      {sorted.map(c=>{const p=courseProgress(c);const d=daysTo(c.examDate||c.endDate);const r=RISK[c.risk]||RISK.medium;
+      {sorted.map(c=>{const p=courseProgress(c,data);const d=daysTo(c.examDate||c.endDate);const r=RISK[c.risk]||RISK.medium;
       const ringColor=d!==null?(d<=7?'#E24B4A':d<=14?'#BA7517':d<=28?'#F5A623':c.color):c.color;
       return<div key={c.id} className="course-mini" style={{borderLeft:`3px solid ${c.color}`,borderRadius:9,cursor:'pointer'}}
         onClick={()=>nav('courses',{courseId:c.id})} onMouseEnter={e=>e.currentTarget.style.background='var(--ch)'} onMouseLeave={e=>e.currentTarget.style.background='var(--card)'}>
@@ -186,33 +186,34 @@ function DashboardPage({data,upd,nav,awardXP}){
 
   return<div>
     {courseTop}
-    {data.settings?.bannerUrl&&<div style={{width:'100%',height:120,borderRadius:10,marginBottom:12,overflow:'hidden',position:'relative',flexShrink:0}}>
-      <img src={data.settings.bannerUrl} alt="banner" style={{width:'100%',height:'100%',objectFit:'cover',objectPosition:'center',display:'block'}}
+    {data.settings?.bannerUrl&&<div style={{width:'100%',height:200,borderRadius:12,marginBottom:14,overflow:'hidden',position:'relative',flexShrink:0}}>
+      <img src={data.settings.bannerUrl} alt="banner" style={{width:'100%',height:'100%',objectFit:'cover',objectPosition:`${data.settings.bannerPosX??50}% ${data.settings.bannerPosY??50}%`,display:'block'}}
         onError={e=>{
           const fb=toDirectImageUrlFallback(data.settings.bannerUrl);
           if(fb&&e.target.src!==fb){e.target.src=fb;return;} // try secondary Drive endpoint once
           e.target.style.display='none';e.target.parentElement.style.background='var(--sur)';
         }}/>
-      <div style={{position:'absolute',inset:0,background:'linear-gradient(to bottom,transparent 30%,rgba(0,0,0,.6))'}}/>
-      <div style={{position:'absolute',bottom:10,left:12,right:12,display:'flex',justifyContent:'space-between',alignItems:'flex-end'}}>
-        <div><div style={{color:'#fff',fontSize:13,fontWeight:600,textShadow:'0 1px 3px rgba(0,0,0,.5)'}}>{new Date().toLocaleDateString('vi-VN',{weekday:'long',day:'numeric',month:'long'})}</div>
-        <div style={{fontSize:11,color:'rgba(255,255,255,.8)',marginTop:1}}>{phase?.name}</div></div>
-        {nextExam&&<div style={{background:'rgba(0,0,0,.5)',borderRadius:7,padding:'4px 10px',textAlign:'center',backdropFilter:'blur(4px)'}}>
-          <div style={{fontSize:22,fontWeight:800,color:daysToExam<=7?'#ff6b6b':daysToExam<=14?'#ffa94d':'#fff',lineHeight:1}}>{daysToExam}</div>
-          <div style={{fontSize:8,color:'rgba(255,255,255,.7)',fontWeight:700}}>NGÀY ĐẾN THI</div>
+      <div style={{position:'absolute',inset:0,background:'linear-gradient(to bottom,rgba(0,0,0,.1) 0%,transparent 35%,rgba(0,0,0,.65) 100%)'}}/>
+      <div style={{position:'absolute',bottom:14,left:16,right:16,display:'flex',justifyContent:'space-between',alignItems:'flex-end'}}>
+        <div><div style={{color:'#fff',fontSize:14,fontWeight:600,textShadow:'0 1px 3px rgba(0,0,0,.5)'}}>{new Date().toLocaleDateString('vi-VN',{weekday:'long',day:'numeric',month:'long'})}</div>
+        <div style={{fontSize:12,color:'rgba(255,255,255,.85)',marginTop:2,textShadow:'0 1px 3px rgba(0,0,0,.5)'}}>{phase?.name}</div></div>
+        {nextExam&&<div style={{background:'rgba(10,12,22,.6)',backdropFilter:'blur(6px)',borderRadius:14,padding:'8px 20px',textAlign:'center',border:`2px solid ${daysToExam<=7?'#ff6b6b':daysToExam<=14?'#ffa94d':'rgba(255,255,255,.3)'}`}}>
+          <div style={{fontSize:44,fontWeight:900,color:daysToExam<=7?'#ff6b6b':daysToExam<=14?'#ffa94d':'#fff',lineHeight:1,textShadow:'0 2px 8px rgba(0,0,0,.4)'}}>{daysToExam}</div>
+          <div style={{fontSize:9,color:'rgba(255,255,255,.85)',fontWeight:700,letterSpacing:'.04em',marginTop:2}}>NGÀY ĐẾN THI</div>
+          <div style={{fontSize:9,color:'rgba(255,255,255,.65)',marginTop:1}}>{nextExam.emoji} {nextExam.name.split(' ').slice(0,2).join(' ')}</div>
         </div>}
       </div>
     </div>}
-    {!data.settings?.bannerUrl&&<div style={{marginBottom:12}}>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+    {!data.settings?.bannerUrl&&<div style={{marginBottom:14}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
         <div>
           <div className="tx-mu">{new Date().toLocaleDateString('vi-VN',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}</div>
           <div style={{fontSize:11,color:'#7C6EF5',marginTop:2}}>📍 {phase?.name} · còn {daysTo(phase?.endDate)} ngày</div>
         </div>
-        {nextExam&&<div style={{background:'var(--card)',border:`1px solid ${daysToExam<=7?'var(--crBdr)':daysToExam<=14?'var(--waBdr)':'var(--acc3)'}`,borderRadius:9,padding:'7px 13px',textAlign:'center',flexShrink:0}}>
-          <div style={{fontSize:26,fontWeight:800,color:daysToExam<=7?'var(--cr)':daysToExam<=14?'var(--wa)':'var(--acc)',lineHeight:1}}>{daysToExam}</div>
-          <div style={{fontSize:9,color:'var(--dm)',fontWeight:700,marginTop:1}}>NGÀY ĐẾN THI</div>
-          <div style={{fontSize:10,color:'var(--mu)'}}>{nextExam.emoji} {nextExam.name.split(' ').slice(0,2).join(' ')}</div>
+        {nextExam&&<div style={{background:'var(--card)',border:`2px solid ${daysToExam<=7?'var(--crBdr)':daysToExam<=14?'var(--waBdr)':'var(--acc3)'}`,borderRadius:14,padding:'10px 24px',textAlign:'center',flexShrink:0}}>
+          <div style={{fontSize:44,fontWeight:900,color:daysToExam<=7?'var(--cr)':daysToExam<=14?'var(--wa)':'var(--acc)',lineHeight:1}}>{daysToExam}</div>
+          <div style={{fontSize:9,color:'var(--dm)',fontWeight:700,letterSpacing:'.04em',marginTop:2}}>NGÀY ĐẾN THI</div>
+          <div style={{fontSize:10,color:'var(--mu)',marginTop:1}}>{nextExam.emoji} {nextExam.name.split(' ').slice(0,2).join(' ')}</div>
         </div>}
       </div>
     </div>}

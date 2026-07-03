@@ -121,7 +121,7 @@ function CourseAttendance({course,onUpdate}){
 
 /* ── Phase Gantt — now renders REAL course.coursePhases (structural unit), not a decorative list.
    Width shows date range, fill % shows computed mastery progress within that Phase. ── */
-function CoursePhaseGantt({course,onUpdate}){
+function CoursePhaseGantt({course,onUpdate,data}){
   const [showAdd,setShowAdd]=useState(false);
   const [editId,setEditId]=useState(null);
   const [f,setF]=useState({title:'',startDate:TODAY,endDate:TODAY});
@@ -159,7 +159,7 @@ function CoursePhaseGantt({course,onUpdate}){
     </div>}
     {coursePhases.length===0&&!showAdd&&<div className="tx-dm" style={{textAlign:'center',padding:'10px'}}>Chưa có Phase nào — bấm "+ Thêm Phase" để tạo</div>}
     {coursePhases.map(p=>{
-      const prog=phaseProgress(p,course.chapters||[],course.concepts||[]);
+      const prog=phaseProgress(p,course.chapters||[],course.concepts||[],data);
       return<div key={p.id} className="gantt2-row">
         <div className="gantt2-label" onClick={()=>{setEditId(p.id);setF({title:p.title,startDate:p.startDate||TODAY,endDate:p.endDate||TODAY});setShowAdd(true);}} style={{cursor:'pointer'}} title="Click để sửa">{p.title}</div>
         <div className="gantt2-track">
@@ -172,68 +172,64 @@ function CoursePhaseGantt({course,onUpdate}){
       </div>;})}
   </div>;}
 
-/* ── Learning Objectives — light v1 per user's request: build now, minimal UI, foundation for future AI roadmap/quiz features ── */
-function LearningObjectivesBlock({course,onUpdate}){
-  const [showAdd,setShowAdd]=useState(false);
-  const [text,setText]=useState('');
-  const objs=course.learningObjectives||[];
-  const concepts=course.concepts||[];
-  const add=()=>{if(!text.trim())return;onUpdate({learningObjectives:[...objs,{id:uid(),text:text.trim()}]});setText('');setShowAdd(false);};
-  const del=(id)=>{
-    onUpdate({
-      learningObjectives:objs.filter(o=>o.id!==id),
-      concepts:concepts.map(c=>({...c,objectiveIds:(c.objectiveIds||[]).filter(x=>x!==id)}))
-    });
-  };
-  const linkedCount=(oId)=>concepts.filter(c=>(c.objectiveIds||[]).includes(oId)).length;
-  return<div className="card" style={{marginBottom:10}}>
-    <div className="flex-sb" style={{marginBottom:8}}>
-      <div className="lbl" style={{margin:0}}>🎯 LEARNING OBJECTIVES</div>
-      <button className="btn-g btn-sm" onClick={()=>setShowAdd(s=>!s)}>+ Thêm</button>
+/* ── Sessions placeholder — Learning Objectives moved here per approved v12.1 spec
+   (Session is the learning unit; Objectives now live inside Session, not Course).
+   Full Session blueprint editor + "Current Session" entry point is Bước 2.
+   Any pre-existing course-level objectives are preserved read-only below. ── */
+function SessionsPlaceholderBlock({course}){
+  const legacy=course.legacyLearningObjectives||[];
+  const sessions=course.sessions||[];
+  return<div className="card" style={{marginBottom:10,borderStyle:'dashed'}}>
+    <div className="flex-sb" style={{marginBottom:legacy.length?8:0}}>
+      <div className="lbl" style={{margin:0}}>🎯 SESSIONS & LEARNING OBJECTIVES</div>
+      <span style={{fontSize:9,background:'var(--acc2)',color:'var(--acc)',borderRadius:4,padding:'2px 6px',fontWeight:600}}>Sắp ra mắt — Bước 2</span>
     </div>
-    {showAdd&&<div style={{display:'flex',gap:6,marginBottom:8}}>
-      <input className="inp" value={text} onChange={e=>setText(e.target.value)} placeholder="VD: Giải thích tại sao OLS thất bại với biến nhị phân..." style={{flex:1,fontSize:12}} onKeyDown={e=>e.key==='Enter'&&add()} autoFocus/>
-      <button className="btn-p btn-sm" onClick={add}>+</button>
+    <div className="tx-dm" style={{marginBottom:legacy.length?8:0}}>
+      Session sẽ là đơn vị học chính: 1 Session = 1 buổi học, phủ nhiều Concept, có Objectives riêng, resources, và nút "Bắt đầu học". {sessions.length>0&&`Hiện có ${sessions.length} session blueprint.`}
+    </div>
+    {legacy.length>0&&<div style={{marginTop:8,paddingTop:8,borderTop:'1px solid var(--bdr)'}}>
+      <div className="tx-dm" style={{marginBottom:5,fontWeight:600}}>📥 Objectives cũ (sẽ gắn vào Session khi Bước 2 hoàn thành):</div>
+      {legacy.map((o,i)=><div key={o.id} style={{fontSize:11,color:'var(--mu)',padding:'3px 0'}}>{i+1}. {o.text}</div>)}
     </div>}
-    {objs.length===0&&<div className="tx-dm" style={{textAlign:'center',padding:'8px'}}>Chưa có objective nào. Đây là nền tảng để sau này liên kết Concept, tạo roadmap hoặc quiz tự động.</div>}
-    {objs.map((o,i)=><div key={o.id} style={{display:'flex',gap:8,alignItems:'flex-start',padding:'6px 0',borderBottom:i<objs.length-1?'1px solid var(--bdr)':'none'}}>
-      <span style={{fontSize:11,color:'var(--dm)',fontWeight:700,marginTop:1}}>{i+1}.</span>
-      <div style={{flex:1}}>
-        <div style={{fontSize:12}}>{o.text}</div>
-        <div className="tx-dm" style={{marginTop:1}}>{linkedCount(o.id)} concept liên kết</div>
-      </div>
-      <button onClick={()=>del(o.id)} style={{background:'none',border:'none',cursor:'pointer',color:'var(--dm)',fontSize:12,opacity:.4}}>×</button>
-    </div>)}
   </div>;}
 
-/* ── Quick Eval modal — the ADHD-friendly "Ghi nhanh" shortcut.
-   One emoji tap = one ConceptEval logged. No session, no todos, no friction. ── */
-function QuickEvalModal({concept,color,onSave,onClose}){
-  const [confidence,setConfidence]=useState(latestConfidence(concept.evals||[])||3);
-  return<div className="ov" onClick={onClose}><div className="modal" style={{maxWidth:360}} onClick={e=>e.stopPropagation()}>
+/* ── Concept Touch modal — the ADHD-friendly "Ghi nhanh" shortcut.
+   Rate Understanding + Confidence (1-5 each, tap-to-select) → one touch
+   logged. No session, no todos, no friction. Mastery is derived from the
+   history of these touches via configurable EMA (04-mastery-engine.js). ── */
+function ConceptTouchModal({concept,color,onSave,onClose}){
+  const [understanding,setUnderstanding]=useState(latestUnderstanding(concept.touches||[])||3);
+  const [confidence,setConfidence]=useState(latestConfidence(concept.touches||[])||3);
+  return<div className="ov" onClick={onClose}><div className="modal" style={{maxWidth:380}} onClick={e=>e.stopPropagation()}>
     <div className="flex-sb" style={{marginBottom:4}}><span style={{fontSize:14,fontWeight:600}}>⚡ Ghi nhanh</span><button className="btn-g btn-sm" onClick={onClose}>✕</button></div>
-    <div style={{fontSize:12,color:'var(--mu)',marginBottom:16}}>{concept.title}</div>
-    <div className="tx-dm" style={{marginBottom:8,textAlign:'center'}}>Bạn hiểu concept này đến đâu?</div>
-    <div style={{display:'flex',justifyContent:'space-between',marginBottom:18}}>
-      {QUICK_EVAL_SCALE.map(q=><button key={q.emoji} onClick={()=>{onSave(q.score,confidence);onClose();}}
-        style={{background:'none',border:'none',cursor:'pointer',fontSize:30,padding:'6px',borderRadius:10,transition:'transform .1s'}}
-        onMouseEnter={e=>e.currentTarget.style.background='var(--ch)'} onMouseLeave={e=>e.currentTarget.style.background='none'}
-        title={q.label}>{q.emoji}</button>)}
+    <div style={{fontSize:12,color:'var(--mu)',marginBottom:18}}>{concept.title}</div>
+
+    <div className="tx-dm" style={{marginBottom:6}}>🧠 Understanding — bạn hiểu đến đâu?</div>
+    <div style={{display:'flex',gap:6,marginBottom:18}}>
+      {[1,2,3,4,5].map(n=><button key={n} onClick={()=>setUnderstanding(n)}
+        style={{flex:1,padding:'10px 0',borderRadius:8,border:`1.5px solid ${understanding>=n?color:'var(--bdr)'}`,background:understanding>=n?color+'22':'transparent',color:understanding>=n?color:'var(--dm)',cursor:'pointer',fontSize:14,fontWeight:700}}>{n}</button>)}
     </div>
-    <div className="tx-dm" style={{marginBottom:6,textAlign:'center'}}>Độ tự tin</div>
-    <div style={{display:'flex',justifyContent:'center',gap:4}}>
-      {[1,2,3,4,5].map(n=><span key={n} onClick={()=>setConfidence(n)} style={{fontSize:22,cursor:'pointer',opacity:confidence>=n?1:.25}}>⭐</span>)}
+
+    <div className="tx-dm" style={{marginBottom:6}}>⭐ Confidence — bạn tự tin đến đâu?</div>
+    <div style={{display:'flex',gap:6,marginBottom:22}}>
+      {[1,2,3,4,5].map(n=><button key={n} onClick={()=>setConfidence(n)}
+        style={{flex:1,padding:'10px 0',borderRadius:8,border:`1.5px solid ${confidence>=n?'var(--wa)':'var(--bdr)'}`,background:confidence>=n?'var(--wab)':'transparent',color:confidence>=n?'var(--wa)':'var(--dm)',cursor:'pointer',fontSize:14,fontWeight:700}}>{n}</button>)}
     </div>
+
+    <button className="btn-p" style={{width:'100%',justifyContent:'center'}} onClick={()=>{onSave(understanding,confidence);onClose();}}>Lưu đánh giá</button>
   </div></div>;}
 
-/* ── Concept row: mastery bar + status + confidence + quick eval + history sparkline ── */
-function ConceptRow({concept,color,examDate,onQuickEval,onEdit,onDelete}){
+/* ── Concept row: mastery bar + status + review priority + touch + history sparkline ── */
+function ConceptRow({concept,color,examDate,data,onTouch,onEdit,onDelete}){
   const [showHistory,setShowHistory]=useState(false);
-  const mastery=calcMastery(concept.evals||[]);
-  const status=deriveConceptStatus(concept,examDate);
+  const touches=concept.touches||[];
+  const mastery=calcMastery(touches,data);
+  const status=deriveConceptStatus(concept,examDate,data);
   const meta=STATUS_META[status];
-  const conf=latestConfidence(concept.evals||[]);
-  const history=[...(concept.evals||[])].sort((a,b)=>a.timestamp-b.timestamp);
+  const reviewPriority=computeReviewPriority(concept,examDate,data);
+  const rpMeta=REVIEW_PRIORITY_META[reviewPriority];
+  const conf=latestConfidence(touches);
+  const history=[...touches].sort((a,b)=>a.timestamp-b.timestamp);
   return<div style={{padding:'8px 0',borderBottom:'1px solid var(--bdr)'}}>
     <div style={{display:'flex',alignItems:'center',gap:8}}>
       <span style={{fontSize:13,flexShrink:0}}>{meta.emoji}</span>
@@ -241,6 +237,7 @@ function ConceptRow({concept,color,examDate,onQuickEval,onEdit,onDelete}){
         <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:3}}>
           <span style={{fontSize:12,fontWeight:500}}>{concept.title}</span>
           {conf>0&&<span style={{fontSize:9,color:'var(--dm)'}}>{'⭐'.repeat(conf)}</span>}
+          {reviewPriority!=='None'&&reviewPriority!=='Low'&&<span title={rpMeta.label} style={{fontSize:9,background:rpMeta.color+'22',color:rpMeta.color,borderRadius:4,padding:'1px 5px',fontWeight:700}}>{rpMeta.emoji} {rpMeta.label}</span>}
         </div>
         <div style={{display:'flex',alignItems:'center',gap:6}}>
           <div style={{flex:1}}><Bar v={mastery} color={meta.color}/></div>
@@ -250,17 +247,17 @@ function ConceptRow({concept,color,examDate,onQuickEval,onEdit,onDelete}){
           {history.length>1&&<span onClick={()=>setShowHistory(s=>!s)} style={{color:'var(--acc)',cursor:'pointer',marginLeft:6}}>{showHistory?'ẩn history ▲':'xem history ▼'}</span>}
         </div>
       </div>
-      <button onClick={onQuickEval} title="Ghi nhanh đánh giá" style={{background:'var(--acc2)',border:'1px solid var(--acc3)',borderRadius:7,cursor:'pointer',fontSize:11,padding:'4px 8px',color:'var(--acc)',fontWeight:600,flexShrink:0}}>⚡ Ghi nhanh</button>
+      <button onClick={onTouch} title="Ghi nhanh đánh giá" style={{background:'var(--acc2)',border:'1px solid var(--acc3)',borderRadius:7,cursor:'pointer',fontSize:11,padding:'4px 8px',color:'var(--acc)',fontWeight:600,flexShrink:0}}>⚡ Ghi nhanh</button>
       <button onClick={onEdit} style={{background:'none',border:'none',cursor:'pointer',color:'var(--dm)',fontSize:11,opacity:.5}}>✏️</button>
       <button onClick={onDelete} style={{background:'none',border:'none',cursor:'pointer',color:'var(--dm)',fontSize:13,opacity:.35}}>×</button>
     </div>
     {showHistory&&history.length>1&&<div style={{marginTop:8,marginLeft:21,background:'var(--sur)',borderRadius:7,padding:'8px'}}>
       <div style={{display:'flex',alignItems:'flex-end',gap:3,height:40}}>
-        {history.map((e,i)=>{
+        {history.map((t,i)=>{
           // Running EMA up to this point, so the sparkline matches calcMastery's trajectory
-          const runningEvals=history.slice(0,i+1);
-          const m=calcMastery(runningEvals);
-          return<div key={i} style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'flex-end',height:'100%'}} title={`${new Date(e.timestamp).toLocaleDateString('vi-VN')}: ${m}%`}>
+          const runningTouches=history.slice(0,i+1);
+          const m=calcMastery(runningTouches,data);
+          return<div key={i} style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'flex-end',height:'100%'}} title={`${new Date(t.timestamp).toLocaleDateString('vi-VN')}: ${m}% (U${t.understanding}/C${t.confidence})`}>
             <div style={{width:'70%',height:`${Math.max(4,m)}%`,background:color,borderRadius:'2px 2px 0 0',opacity:.4+0.6*(i/(history.length-1||1))}}/>
           </div>;})}
       </div>
@@ -271,32 +268,27 @@ function ConceptRow({concept,color,examDate,onQuickEval,onEdit,onDelete}){
     </div>}
   </div>;}
 
-/* ── Concept editor: title, target date (optional, for schedule timeline), objective links ── */
-function ConceptEditorModal({concept,chapterId,objectives,onSave,onClose}){
-  const [f,setF]=useState(concept?{title:concept.title,targetDate:concept.targetDate||concept.legacyDueDate||'',objectiveIds:concept.objectiveIds||[]}:{title:'',targetDate:'',objectiveIds:[]});
+/* ── Concept editor: title, target date (optional, for schedule timeline), prerequisites (data
+   model only per user's request — no UI yet). Objective links removed (Objectives now live in
+   Session, not Concept-side; a Session declares which Concepts it covers instead). ── */
+function ConceptEditorModal({concept,chapterId,onSave,onClose}){
+  const [f,setF]=useState(concept?{title:concept.title,targetDate:concept.targetDate||concept.legacyDueDate||''}:{title:'',targetDate:''});
   const s=(k,v)=>setF(p=>({...p,[k]:v}));
-  const togObj=(id)=>setF(p=>({...p,objectiveIds:p.objectiveIds.includes(id)?p.objectiveIds.filter(x=>x!==id):[...p.objectiveIds,id]}));
-  const save=()=>{if(!f.title.trim())return;onSave(concept?{...concept,...f}:{id:uid(),chapterId,evals:[],legacySubtasks:[],...f});};
+  const save=()=>{if(!f.title.trim())return;onSave(concept?{...concept,...f}:{id:uid(),chapterId,touches:[],objectiveIds:[],prerequisiteConceptIds:[],legacySubtasks:[],...f});};
   return<div className="ov" onClick={onClose}><div className="modal" style={{maxWidth:400}} onClick={e=>e.stopPropagation()}>
     <div className="flex-sb" style={{marginBottom:12}}><span style={{fontSize:14,fontWeight:500}}>{concept?'✏️ Sửa Concept':'+ Concept mới'}</span><button className="btn-g btn-sm" onClick={onClose}>✕</button></div>
     <div className="tx-dm" style={{marginBottom:2}}>Tên concept *</div>
     <input className="inp" value={f.title} onChange={e=>s('title',e.target.value)} placeholder="VD: Maximum Likelihood Estimation..." style={{marginBottom:10}} autoFocus/>
     <div className="tx-dm" style={{marginBottom:2}}>Muốn thành thạo trước ngày nào (tùy chọn)</div>
-    <input type="date" className="inp" value={f.targetDate} onChange={e=>s('targetDate',e.target.value)} style={{marginBottom:10}}/>
-    {objectives.length>0&&<div>
-      <div className="tx-dm" style={{marginBottom:4}}>Liên kết Learning Objective</div>
-      <div style={{display:'flex',flexWrap:'wrap',gap:5,marginBottom:14}}>
-        {objectives.map(o=><button key={o.id} onClick={()=>togObj(o.id)} style={{padding:'4px 8px',borderRadius:6,border:`1px solid ${f.objectiveIds.includes(o.id)?'var(--acc)':'var(--bdr)'}`,background:f.objectiveIds.includes(o.id)?'var(--acc2)':'transparent',color:f.objectiveIds.includes(o.id)?'var(--acc)':'var(--mu)',cursor:'pointer',fontSize:10,maxWidth:180,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{o.text}</button>)}
-      </div>
-    </div>}
+    <input type="date" className="inp" value={f.targetDate} onChange={e=>s('targetDate',e.target.value)} style={{marginBottom:14}}/>
     <div style={{display:'flex',gap:8}}><button className="btn-p" style={{flex:1,justifyContent:'center'}} onClick={save}>Lưu</button><button className="btn-g" onClick={onClose}>Huỷ</button></div>
   </div></div>;}
 
 /* ── Chapter block: header (progress) + expandable Concept list ── */
-function ChapterBlock({chapter,concepts,objectives,examDate,color,onUpdate,onAddConcept,onEditConcept,onDeleteConcept,onQuickEval,onEditChapter,onDeleteChapter}){
+function ChapterBlock({chapter,concepts,examDate,color,data,onAddConcept,onEditConcept,onDeleteConcept,onTouch,onEditChapter,onDeleteChapter}){
   const [expanded,setExpanded]=useState(true);
   const chConcepts=concepts.filter(c=>c.chapterId===chapter.id);
-  const prog=chapterProgress(chapter,concepts);
+  const prog=chapterProgress(chapter,concepts,data);
   return<div className="card" style={{marginBottom:8,padding:'11px 14px'}}>
     <div style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer'}} onClick={()=>setExpanded(e=>!e)}>
       <span style={{fontSize:11,color:'var(--dm)'}}>{expanded?'▼':'▶'}</span>
@@ -309,8 +301,8 @@ function ChapterBlock({chapter,concepts,objectives,examDate,color,onUpdate,onAdd
     </div>
     {expanded&&<div style={{marginTop:8,paddingLeft:19}}>
       {chConcepts.length===0&&<div className="tx-dm" style={{padding:'8px 0'}}>Chưa có concept nào trong chapter này</div>}
-      {chConcepts.map(c=><ConceptRow key={c.id} concept={c} color={color} examDate={examDate}
-        onQuickEval={()=>onQuickEval(c)} onEdit={()=>onEditConcept(c)} onDelete={()=>onDeleteConcept(c.id)}/>)}
+      {chConcepts.map(c=><ConceptRow key={c.id} concept={c} color={color} examDate={examDate} data={data}
+        onTouch={()=>onTouch(c)} onEdit={()=>onEditConcept(c)} onDelete={()=>onDeleteConcept(c.id)}/>)}
       <button className="btn-g btn-sm" style={{marginTop:8}} onClick={()=>onAddConcept(chapter.id)}>+ Thêm Concept</button>
     </div>}
   </div>;}
@@ -363,7 +355,7 @@ function KnowledgeNotesBlock({course,onUpdate}){
   </div>;}
 
 /* ── Schedule timeline — reads Concept.targetDate (new) or legacyDueDate (migrated), colored by mastery status ── */
-function CourseScheduleView({course}){
+function CourseScheduleView({course,data}){
   const concepts=(course.concepts||[]).filter(c=>c.targetDate||c.legacyDueDate).map(c=>({...c,_date:c.targetDate||c.legacyDueDate})).sort((a,b)=>a._date.localeCompare(b._date));
   if(concepts.length===0)return null;
   const startAct=new Date(Math.min(new Date(concepts[0]._date).getTime(),Date.now()));startAct.setHours(0,0,0,0);
@@ -371,14 +363,14 @@ function CourseScheduleView({course}){
   const totalMs=Math.max(1,endD-startAct);
   const todayPct=Math.max(0,Math.min(100,(new Date()-startAct)/totalMs*100));
   return<div className="card" style={{marginBottom:10}}>
-    <div className="lbl" style={{marginBottom:6}}>📅 TIMELINE CONCEPT</div>
+    <div className="lbl" style={{marginBottom:6}}>📅 STUDY TIMELINE <span style={{fontWeight:400,color:'var(--dm)',fontSize:9}}>(theo Concept — sẽ chuyển sang Session ở Bước 2)</span></div>
     <div style={{position:'relative',height:20,marginBottom:8,marginLeft:4,marginRight:60}}>
       <div style={{position:'absolute',inset:'8px 0',background:'var(--dm)',borderRadius:2,opacity:.4}}/>
       <div style={{position:'absolute',left:`${todayPct}%`,top:0,bottom:0,width:2,background:'var(--acc)',borderRadius:1}}/>
       <div style={{position:'absolute',left:`${todayPct}%`,top:-2,transform:'translateX(-50%)',background:'var(--acc)',color:'#fff',fontSize:8,fontWeight:700,borderRadius:3,padding:'1px 4px',whiteSpace:'nowrap'}}>Hôm nay</div>
     </div>
     {concepts.map(c=>{
-      const status=deriveConceptStatus(c,course.examDate);
+      const status=deriveConceptStatus(c,course.examDate,data);
       const meta=STATUS_META[status];
       const days=daysTo(c._date);
       return<div key={c.id} style={{display:'flex',alignItems:'center',gap:8,padding:'4px 0'}}>
@@ -389,26 +381,26 @@ function CourseScheduleView({course}){
   </div>;}
 
 /* ── Course Detail — full page assembly ── */
-function CourseDetail({course,onBack,onUpdate,onDelete}){
+function CourseDetail({course,data,onBack,onUpdate,onDelete}){
   const [showEditor,setShowEditor]=useState(false);
   const [showAddChapter,setShowAddChapter]=useState(false);
   const [editChapter,setEditChapter]=useState(null);
   const [editConcept,setEditConcept]=useState(null); // {concept, chapterId} or {chapterId} for new
-  const [quickEvalConcept,setQuickEvalConcept]=useState(null);
+  const [touchConcept,setTouchConcept]=useState(null);
   const [delConfirm,setDelConfirm]=useState(false);
 
   const coursePhases=course.coursePhases||[];
   const chapters=course.chapters||[];
   const concepts=course.concepts||[];
-  const progress=courseProgress(course);
-  const weak=weakConcepts(course);
+  const progress=courseProgress(course,data);
+  const weak=weakConcepts(course,data);
   const examD=course.examDate?daysTo(course.examDate):null;
 
   const addConcept=(f)=>onUpdate({concepts:[...concepts,f]});
   const editConceptSave=(f)=>onUpdate({concepts:concepts.map(c=>c.id===f.id?f:c)});
   const delConcept=(id)=>onUpdate({concepts:concepts.filter(c=>c.id!==id)});
-  const quickEvalSave=(conceptId,score,confidence)=>{
-    onUpdate({concepts:concepts.map(c=>c.id===conceptId?{...c,evals:[...(c.evals||[]),{score,confidence,timestamp:Date.now(),sessionId:null}]}:c)});
+  const touchSave=(conceptId,understanding,confidence)=>{
+    onUpdate({concepts:concepts.map(c=>c.id===conceptId?{...c,touches:[...(c.touches||[]),{understanding,confidence,timestamp:Date.now(),sessionId:null}]}:c)});
   };
   const saveChapter=(f)=>{
     if(chapters.find(c=>c.id===f.id))onUpdate({chapters:chapters.map(c=>c.id===f.id?f:c)});
@@ -446,25 +438,25 @@ function CourseDetail({course,onBack,onUpdate,onDelete}){
         <span style={{fontWeight:700,color:course.color}}>{progress}%</span>
         {examD!==null&&<span style={{fontSize:11,color:examD<=7?'var(--cr)':'var(--mu)',fontWeight:600}}>còn {examD} ngày đến thi</span>}
       </div>
-      {weak.length>0&&<div style={{marginTop:8,fontSize:11,color:'var(--cr)'}}>🔁 {weak.length} concept cần ôn lại gấp</div>}
+      {weak.length>0&&<div style={{marginTop:8,fontSize:11,color:'var(--cr)'}}>🔴 {weak.length} concept cần ôn gấp (Review Priority cao)</div>}
       {course.note&&<div style={{marginTop:8,fontSize:11,color:'var(--mu)',background:'var(--sur)',borderRadius:6,padding:'6px 8px'}}>{course.note}</div>}
     </div>
 
     <CourseAttendance course={course} onUpdate={onUpdate}/>
-    <CourseScheduleView course={course}/>
-    <CoursePhaseGantt course={course} onUpdate={onUpdate}/>
-    <LearningObjectivesBlock course={course} onUpdate={onUpdate}/>
+    <CourseScheduleView course={course} data={data}/>
+    <CoursePhaseGantt course={course} onUpdate={onUpdate} data={data}/>
+    <SessionsPlaceholderBlock course={course}/>
 
     <div className="flex-sb" style={{marginBottom:8}}>
       <div className="lbl" style={{margin:0}}>📚 CHAPTERS & CONCEPTS</div>
       <button className="btn-p btn-sm" onClick={()=>setShowAddChapter(true)}>+ Chapter</button>
     </div>
     {chapters.length===0&&<div className="card"><div className="tx-dm" style={{textAlign:'center',padding:14}}>Chưa có Chapter nào. Thêm Phase trước (nếu cần), rồi thêm Chapter.</div></div>}
-    {chapters.map(ch=><ChapterBlock key={ch.id} chapter={ch} concepts={concepts} objectives={course.learningObjectives||[]} examDate={course.examDate} color={course.color}
+    {chapters.map(ch=><ChapterBlock key={ch.id} chapter={ch} concepts={concepts} examDate={course.examDate} color={course.color} data={data}
       onAddConcept={(chapterId)=>setEditConcept({chapterId})}
       onEditConcept={(c)=>setEditConcept({concept:c,chapterId:c.chapterId})}
       onDeleteConcept={delConcept}
-      onQuickEval={setQuickEvalConcept}
+      onTouch={setTouchConcept}
       onEditChapter={()=>setEditChapter(ch)}
       onDeleteChapter={()=>delChapter(ch.id)}/>)}
 
@@ -472,10 +464,10 @@ function CourseDetail({course,onBack,onUpdate,onDelete}){
 
     {showEditor&&<CourseEditorModal existing={course} onSave={f=>{onUpdate(f);setShowEditor(false);}} onClose={()=>setShowEditor(false)}/>}
     {(showAddChapter||editChapter)&&<ChapterEditorModal chapter={editChapter} coursePhases={coursePhases} onSave={saveChapter} onClose={()=>{setShowAddChapter(false);setEditChapter(null);}}/>}
-    {editConcept&&<ConceptEditorModal concept={editConcept.concept} chapterId={editConcept.chapterId} objectives={course.learningObjectives||[]}
+    {editConcept&&<ConceptEditorModal concept={editConcept.concept} chapterId={editConcept.chapterId}
       onSave={f=>{editConcept.concept?editConceptSave(f):addConcept(f);setEditConcept(null);}} onClose={()=>setEditConcept(null)}/>}
-    {quickEvalConcept&&<QuickEvalModal concept={quickEvalConcept} color={course.color}
-      onSave={(score,confidence)=>quickEvalSave(quickEvalConcept.id,score,confidence)} onClose={()=>setQuickEvalConcept(null)}/>}
+    {touchConcept&&<ConceptTouchModal concept={touchConcept} color={course.color}
+      onSave={(understanding,confidence)=>touchSave(touchConcept.id,understanding,confidence)} onClose={()=>setTouchConcept(null)}/>}
   </div>;}
 
 /* ── Courses list page (wrapper — mostly unchanged) ── */
@@ -490,7 +482,7 @@ function CoursesPage({data,upd,initCourseId}){
   const addCourse=(f)=>{upd({courses:[...data.courses,f]});setShowEditor(false);setSel(f.id);};
   const visible=data.courses.filter(c=>showArchived?c.archived:!c.archived);
 
-  if(course)return<CourseDetail course={course} onBack={()=>setSel(null)} onUpdate={updCourse} onDelete={delCourse}/>;
+  if(course)return<CourseDetail course={course} data={data} onBack={()=>setSel(null)} onUpdate={updCourse} onDelete={delCourse}/>;
 
   return<div>
     <div className="flex-sb" style={{marginBottom:4}}><div className="h1">📚 Môn học</div><button className="btn-p btn-sm" onClick={()=>setShowEditor(true)}>+ Thêm môn</button></div>
@@ -499,7 +491,7 @@ function CoursesPage({data,upd,initCourseId}){
       <button onClick={()=>setShowArchived(true)} style={{padding:'6px 14px',borderRadius:8,border:`1.5px solid ${showArchived?'var(--acc)':'var(--bdr)'}`,background:showArchived?'var(--acc2)':'var(--sur)',color:showArchived?'var(--acc)':'var(--mu)',cursor:'pointer',fontSize:12,fontWeight:showArchived?700:400}}>Đã lưu trữ ({data.courses.filter(c=>c.archived).length})</button>
     </div>
     <div className="g2">
-      {visible.map(c=>{const p=courseProgress(c);const d=daysTo(c.examDate||c.endDate);return<div key={c.id} className="card" style={{cursor:'pointer'}} onClick={()=>setSel(c.id)}>
+      {visible.map(c=>{const p=courseProgress(c,data);const d=daysTo(c.examDate||c.endDate);return<div key={c.id} className="card" style={{cursor:'pointer'}} onClick={()=>setSel(c.id)}>
         <div className="flex-sb" style={{marginBottom:6}}>
           <div style={{display:'flex',gap:8,alignItems:'center'}}><span style={{fontSize:18}}>{c.emoji}</span><span style={{fontWeight:600,fontSize:13}}>{c.name}</span></div>
           <Badge risk={c.risk}/>

@@ -475,6 +475,36 @@ function SettingsPage({data,upd}){
       </div>
     </div>
     <div className="card" style={{marginBottom:12}}>
+      <div className="lbl" style={{marginBottom:4}}>🧠 MASTERY ENGINE</div>
+      <div className="tx-dm" style={{marginBottom:12,fontSize:10}}>Tinh chỉnh cách hệ thống tính % mastery và độ ưu tiên ôn tập. Đổi ở đây áp dụng ngay cho mọi môn học.</div>
+      {(()=>{
+        const ms={...DEFAULT_MASTERY_SETTINGS,...(data.masterySettings||{})};
+        const setMs=(k,v)=>upd({masterySettings:{...ms,[k]:v}});
+        const Row=({label,hint,k,min,max,step})=><div style={{marginBottom:12}}>
+          <div className="flex-sb" style={{marginBottom:3}}>
+            <span style={{fontSize:11,color:'var(--tx)'}}>{label}</span>
+            <span style={{fontSize:11,color:'var(--acc)',fontWeight:700}}>{ms[k]}</span>
+          </div>
+          <input type="range" min={min} max={max} step={step} value={ms[k]} onChange={e=>setMs(k,parseFloat(e.target.value))} style={{width:'100%'}}/>
+          {hint&&<div className="tx-dm" style={{fontSize:9,marginTop:2}}>{hint}</div>}
+        </div>;
+        return<div>
+          <div style={{fontSize:10,color:'var(--mu)',fontWeight:700,letterSpacing:'.05em',marginBottom:8}}>CÔNG THỨC MASTERY (EMA)</div>
+          <Row label="EMA Alpha — độ nhạy với lần đánh giá mới" hint="Cao hơn = phản ứng nhanh hơn với lần Ghi nhanh gần nhất; thấp hơn = mượt hơn, ít bị lệch bởi 1 lần tệ" k="emaAlpha" min={0.1} max={0.9} step={0.05}/>
+          <Row label="Trọng số Understanding" hint="Understanding + Confidence phải cộng lại ≈ 1" k="understandingWeight" min={0} max={1} step={0.05}/>
+          <Row label="Trọng số Confidence" k="confidenceWeight" min={0} max={1} step={0.05}/>
+          <div style={{fontSize:10,color:'var(--mu)',fontWeight:700,letterSpacing:'.05em',margin:'14px 0 8px'}}>REVIEW PRIORITY</div>
+          <Row label="Ngưỡng 'lâu chưa ôn' (ngày)" k="staleDays" min={3} max={30} step={1}/>
+          <Row label="Ngưỡng 'thi sắp tới' (ngày)" k="examSoonDays" min={7} max={45} step={1}/>
+          <Row label="Trọng số: mastery thấp" k="reviewW_mastery" min={0} max={1} step={0.05}/>
+          <Row label="Trọng số: lâu chưa ôn" k="reviewW_staleness" min={0} max={1} step={0.05}/>
+          <Row label="Trọng số: confidence thấp" k="reviewW_confidence" min={0} max={1} step={0.05}/>
+          <Row label="Trọng số: thi sắp tới" k="reviewW_examUrgency" min={0} max={1} step={0.05}/>
+          <button className="btn-g btn-sm" onClick={()=>upd({masterySettings:{...DEFAULT_MASTERY_SETTINGS}})}>↺ Reset về mặc định</button>
+        </div>;
+      })()}
+    </div>
+    <div className="card" style={{marginBottom:12}}>
       <div className="lbl" style={{marginBottom:10}}>🔘 BO GÓC (Border Radius)</div>
       <div style={{display:'flex',gap:8}}>
         {[['sharp','Vuông sắc','4px'],['rounded','Bo vừa','12px'],['pill','Bo nhiều','20px']].map(([k,label,px])=>{const active=s.radius===k;return<button key={k} onClick={()=>setS('radius',k)} style={{flex:1,padding:'10px',border:`2px solid ${active?'var(--acc)':'var(--bdr)'}`,borderRadius:active?k==='sharp'?4:k==='pill'?20:12:8,background:active?'var(--acc2)':'var(--sur)',cursor:'pointer',color:active?'var(--acc)':'var(--mu)',fontWeight:active?700:400,fontSize:12}}>
@@ -514,17 +544,32 @@ function SettingsPage({data,upd}){
           ['🌆 City','https://images.unsplash.com/photo-1477959858617-67f85cf4f1df?w=800&q=70'],
         ].map(([label,url])=><button key={label} onClick={()=>setS('bannerUrl',url)} style={{padding:'5px',borderRadius:7,border:`1.5px solid ${s.bannerUrl===url?'var(--acc)':'var(--bdr)'}`,background:'var(--sur)',cursor:'pointer',fontSize:11,color:s.bannerUrl===url?'var(--acc)':'var(--mu)',fontWeight:s.bannerUrl===url?600:400}}>{label}</button>)}
       </div>
-      {s.bannerUrl&&<div style={{width:'100%',height:80,borderRadius:8,overflow:'hidden',border:'1px solid var(--bdr)',marginTop:2,position:'relative',background:'var(--sur)'}}>
-        <img src={s.bannerUrl} alt="preview" style={{width:'100%',height:'100%',objectFit:'cover'}}
-          onError={e=>{
-            const fb=toDirectImageUrlFallback(s.bannerUrl);
-            if(fb&&e.target.src!==fb){e.target.src=fb;return;} // try secondary Drive endpoint once
-            e.target.style.display='none';const w=e.target.nextSibling;if(w)w.style.display='flex';
-          }}
-          onLoad={e=>{e.target.style.display='block';const w=e.target.nextSibling;if(w)w.style.display='none';}}/>
-        <div style={{display:'none',position:'absolute',inset:0,flexDirection:'column',alignItems:'center',justifyContent:'center',fontSize:9,color:'var(--cr)',textAlign:'center',padding:8,gap:2}}>
-          <div>⚠️ Không tải được ảnh</div>
-          <div style={{color:'var(--mu)',fontSize:8}}>Kiểm tra: link đã "Bất kỳ ai có đường liên kết" chưa? Đây có đúng là link 1 file ảnh (không phải folder)?</div>
+      {s.bannerUrl&&<div>
+        <div className="tx-dm" style={{marginBottom:5,fontSize:10}}>🎯 Kéo trên ảnh để chỉnh vị trí hiển thị (focal point):</div>
+        <div style={{width:'100%',height:140,borderRadius:8,overflow:'hidden',border:'1px solid var(--bdr)',marginTop:2,position:'relative',background:'var(--sur)',cursor:'crosshair'}}
+          onMouseDown={e=>{
+            const box=e.currentTarget;
+            const move=(ev)=>{
+              const r=box.getBoundingClientRect();
+              const x=Math.max(0,Math.min(100,Math.round((ev.clientX-r.left)/r.width*100)));
+              const y=Math.max(0,Math.min(100,Math.round((ev.clientY-r.top)/r.height*100)));
+              setS('bannerPosX',x);setS('bannerPosY',y);
+            };
+            move(e.nativeEvent);
+            const up=()=>{window.removeEventListener('mousemove',move);window.removeEventListener('mouseup',up);};
+            window.addEventListener('mousemove',move);window.addEventListener('mouseup',up);
+          }}>
+          <img src={s.bannerUrl} alt="preview" style={{width:'100%',height:'100%',objectFit:'cover',objectPosition:`${s.bannerPosX??50}% ${s.bannerPosY??50}%`,pointerEvents:'none'}}
+            onError={e=>{
+              const fb=toDirectImageUrlFallback(s.bannerUrl);
+              if(fb&&e.target.src!==fb){e.target.src=fb;return;}
+              e.target.style.display='none';const w=e.target.parentElement.nextSibling;if(w)w.style.display='flex';
+            }}/>
+          <div style={{position:'absolute',left:`${s.bannerPosX??50}%`,top:`${s.bannerPosY??50}%`,width:16,height:16,borderRadius:'50%',border:'2.5px solid #fff',boxShadow:'0 0 0 1.5px rgba(0,0,0,.4), 0 2px 6px rgba(0,0,0,.4)',transform:'translate(-50%,-50%)',pointerEvents:'none'}}/>
+        </div>
+        <div style={{display:'flex',gap:8,marginTop:6}}>
+          <button className="btn-g btn-sm" onClick={()=>{setS('bannerPosX',50);setS('bannerPosY',50);}}>↺ Về giữa</button>
+          <span className="tx-dm" style={{alignSelf:'center'}}>X:{s.bannerPosX??50}% Y:{s.bannerPosY??50}%</span>
         </div>
       </div>}
       {s.bannerUrl&&<button className="btn-g btn-sm" style={{marginTop:6,color:'var(--cr)'}} onClick={()=>setS('bannerUrl','')}>Xoá banner</button>}
