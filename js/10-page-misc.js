@@ -778,151 +778,95 @@ function ParkingLotPage({data,upd}){
 
 /* ── V10: STUDY JOURNAL ── */
 /* ── V10b: STUDY JOURNAL — 2-col blocks, embedded timer, weekly hours ── */
-function StudyJournalPage({data,upd}){
-  const [showNew,setShowNew]=useState(false);
-  const [newSubj,setNewSubj]=useState(data.courses[0]?.id||'other');
-  const [planItems,setPlanItems]=useState([{id:uid(),text:'',status:'todo',src:'manual'}]);
-  const [expandId,setExpandId]=useState(null);
-  // ── Embedded timer state ──
-  const [tSubj,setTSubj]=useState(data.courses[0]?.id||'other');
-  const [tRunning,setTRunning]=useState(false);
-  const [tElapsed,setTElapsed]=useState(0);
-  const tIntRef=useRef(null);const tStartRef=useRef(null);const tBaseRef=useRef(0);
-  useEffect(()=>{return()=>{if(tIntRef.current)clearInterval(tIntRef.current);};},[]);
-  // ← V10c: resync display instantly on tab visibility change (same fix as TimerPage)
-  useEffect(()=>{
-    const onVis=()=>{if(document.visibilityState==='visible'&&tStartRef.current){setTElapsed(tBaseRef.current+Math.floor((Date.now()-tStartRef.current)/1000));}};
-    document.addEventListener('visibilitychange',onVis);
-    return()=>document.removeEventListener('visibilitychange',onVis);
-  },[]);
-  const tGetReal=()=>tBaseRef.current+(tStartRef.current?Math.floor((Date.now()-tStartRef.current)/1000):0);
-  const tToggle=()=>{
-    if(tRunning){clearInterval(tIntRef.current);tIntRef.current=null;tBaseRef.current=tGetReal();tStartRef.current=null;setTElapsed(tBaseRef.current);setTRunning(false);}
-    else{tStartRef.current=Date.now();setTRunning(true);tIntRef.current=setInterval(()=>setTElapsed(Math.floor((Date.now()-tStartRef.current)/1000)+tBaseRef.current),1000);}
-  };
-  const tReset=()=>{clearInterval(tIntRef.current);tIntRef.current=null;tStartRef.current=null;tBaseRef.current=0;setTElapsed(0);setTRunning(false);};
-  const tSave=()=>{
-    const secs=tGetReal();const h=Math.round(secs/3600*4)/4;if(h<0.05){tReset();return;}
-    const s=allS.find(x=>x.id===tSubj);
-    const entry={id:uid(),date:TODAY,subjectId:tSubj,hours:h,subjectName:s?.name||'',note:`⏱️ ${fmtS(secs)}`};
-    const newXP=(data.gamification?.xp||0)+Math.round(h*XPR.hour);
-    upd({studyLog:[entry,...data.studyLog],gamification:{...(data.gamification||{}),xp:newXP}});
-    showXpPop(Math.round(h*XPR.hour));tReset();
-  };
+/* ══════════════════════════════════════════════════════════════
+   Study Journal — V12.1 rebuild: reads data.journalEntries (Session
+   Instances), NOT the old ad-hoc plan-items journal. "Start Study" is
+   available here too (per user's decision) — reuses the same
+   CurrentSessionCard/SessionEditorModal/useSessionTimer components as
+   Course Detail, so state (persisted via session.activeStartedAt) stays
+   consistent no matter where you started or navigate to.
+   ══════════════════════════════════════════════════════════════ */
+function StudyJournalPage({data,upd,awardXP}){
+  const courses=data.courses.filter(c=>!c.archived);
+  const [pickedCourseId,setPickedCourseId]=useState(courses[0]?.id||'');
+  const journalEntries=data.journalEntries||[];
 
-  const allS=[...data.courses.filter(c=>!c.archived).map(c=>({id:c.id,name:c.name,emoji:c.emoji,color:c.color})),{id:'de',name:'Tiếng Đức',emoji:'🇩🇪',color:'#FFD700'},{id:'en',name:'Tiếng Anh',emoji:'🇬🇧',color:'#4FA3FF'},{id:'other',name:'Khác',emoji:'📌',color:'#7C6EF5'}];
-  const journal=data.studyJournal||[];
+  // If ANY course has an in-progress session, surface it first regardless of picker
+  // (so finishing a session you started elsewhere is always one click away here).
+  let globalInProgress=null;
+  for(const c of courses){const s=(c.sessions||[]).find(x=>x.status==='in_progress');if(s){globalInProgress={course:c,session:s};break;}}
+
+  const pickedCourse=courses.find(c=>c.id===pickedCourseId);
+  const updCourse=(courseId,ch)=>upd({courses:data.courses.map(c=>c.id===courseId?{...c,...ch}:c)});
+
+  const pickedSessions=pickedCourse?.sessions||[];
+  const pickedPlanned=pickedSessions.filter(s=>s.status==='planned').sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));
+  const pickedCurrent=pickedSessions.find(s=>s.status==='in_progress')||pickedPlanned[0]||null;
+
+  // History grouped by course, most recent first
+  const grouped={};journalEntries.filter(j=>j.status==='completed').forEach(j=>{if(!grouped[j.courseId])grouped[j.courseId]=[];grouped[j.courseId].push(j);});
+  Object.keys(grouped).forEach(k=>grouped[k].sort((a,b)=>b.date.localeCompare(a.date)));
   const wd=weekDates();
-  // Weekly hours per subject
-  const weekH={};data.studyLog.filter(l=>wd.includes(l.date)).forEach(l=>{weekH[l.subjectId]=(weekH[l.subjectId]||0)+l.hours;});
-  // Group journal by subjectId, sort each group by date desc
-  const grouped={};journal.forEach(e=>{if(!grouped[e.subjectId])grouped[e.subjectId]=[];grouped[e.subjectId].push(e);});
-  Object.keys(grouped).forEach(k=>grouped[k].sort((a,b)=>b.date.localeCompare(a.date)||b.id.localeCompare(a.id)));
-  const STATUS_CYCLE={'todo':'doing','doing':'done','done':'todo'};
-  const STATUS_ICON={'todo':'○','doing':'◑','done':'✓'};
-  const STATUS_COLOR={'todo':'var(--bdr)','doing':'var(--wa)','done':'var(--su)'};
-  const updEntry=(id,ch)=>upd({studyJournal:journal.map(e=>e.id===id?{...e,...ch}:e)});
-  const updItem=(entryId,itemId,ch)=>updEntry(entryId,{planItems:journal.find(e=>e.id===entryId)?.planItems.map(p=>p.id===itemId?{...p,...ch}:p)||[]});
-  const pullTopics=(cid)=>{const c=data.courses.find(x=>x.id===cid);if(!c)return;const undone=(c.concepts||[]).filter(cn=>deriveConceptStatus(cn,c.examDate)!=='Mastered').slice(0,5).map(cn=>({id:uid(),text:cn.title,status:'todo',src:'concept',conceptId:cn.id}));setPlanItems(p=>[...p.filter(x=>x.src==='manual'&&x.text),...undone]);};
-  const createSession=()=>{
-    const s=allS.find(x=>x.id===newSubj);
-    const entry={id:uid(),date:TODAY,subjectId:newSubj,subjectName:s?.name||'',subjectEmoji:s?.emoji||'📚',planItems:planItems.filter(p=>p.text.trim()),notes:'',hours:0};
-    upd({studyJournal:[entry,...journal]});
-    setShowNew(false);setPlanItems([{id:uid(),text:'',status:'todo',src:'manual'}]);setExpandId(entry.id);
-  };
+  const weekMinutesByCourse={};
+  journalEntries.filter(j=>j.status==='completed'&&wd.includes(j.date)).forEach(j=>{weekMinutesByCourse[j.courseId]=(weekMinutesByCourse[j.courseId]||0)+(j.duration||0);});
+
+  const sessionTitle=(courseId,sessionId)=>{const c=data.courses.find(x=>x.id===courseId);const s=(c?.sessions||[]).find(x=>x.id===sessionId);return s?.title||'(session đã xoá)';};
 
   return<div>
-    <div className="flex-sb" style={{marginBottom:10}}>
-      <div className="h1">📓 Nhật ký tự học</div>
-      <button className="btn-p btn-sm" onClick={()=>setShowNew(true)}>+ Phiên học mới</button>
-    </div>
+    <div className="h1" style={{marginBottom:4}}>📓 Nhật ký học</div>
+    <p className="tx-mu" style={{marginBottom:14}}>Mỗi buổi học là 1 Journal Entry, gắn với 1 Session cụ thể. Analytics đọc từ đây, không đọc % thủ công.</p>
 
-    {/* ── Embedded Timer ── */}
-    <div className="card" style={{marginBottom:14,background:tRunning?'rgba(124,110,245,.07)':'var(--card)',borderColor:tRunning?'var(--acc3)':'var(--bdr)'}}>
-      <div className="lbl" style={{marginBottom:8}}>⏱️ TIMER TỰ HỌC {tRunning&&<span style={{fontSize:9,color:'var(--acc)',animation:'pulse 1s infinite'}}>● ĐAng chạy</span>}</div>
-      <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
-        <div style={{fontSize:28,fontWeight:800,color:tRunning?'var(--acc)':'var(--tx)',fontVariantNumeric:'tabular-nums',minWidth:90,fontFamily:'monospace'}}>{fmtS(tElapsed)}</div>
-        <select className="sel" value={tSubj} onChange={e=>setTSubj(e.target.value)} style={{flex:1,minWidth:120,fontSize:12}}>
-          {allS.map(s=><option key={s.id} value={s.id}>{s.emoji} {s.name}</option>)}
+    {globalInProgress&&<div style={{marginBottom:14}}>
+      <div className="lbl" style={{marginBottom:6}}>▶️ ĐANG HỌC ({globalInProgress.course.emoji} {globalInProgress.course.name})</div>
+      <CurrentSessionCard course={globalInProgress.course} session={globalInProgress.session} journalEntries={journalEntries}
+        onUpdateCourse={ch=>updCourse(globalInProgress.course.id,ch)} upd={upd} data={data} awardXP={awardXP}/>
+    </div>}
+
+    {!globalInProgress&&<div style={{marginBottom:14}}>
+      <div className="lbl" style={{marginBottom:6}}>▶️ BẮT ĐẦU HỌC</div>
+      <div className="card" style={{marginBottom:8}}>
+        <div className="tx-dm" style={{marginBottom:6}}>Chọn môn học</div>
+        <select className="sel" value={pickedCourseId} onChange={e=>setPickedCourseId(e.target.value)} style={{marginBottom:0}}>
+          {courses.map(c=><option key={c.id} value={c.id}>{c.emoji} {c.name}</option>)}
         </select>
-        <button onClick={tToggle} style={{width:42,height:42,borderRadius:21,background:tRunning?'var(--cr)':'var(--acc)',color:'#fff',border:'none',cursor:'pointer',fontSize:18,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
-          {tRunning?'⏸':'▶'}
-        </button>
-        <button onClick={tReset} style={{width:36,height:36,borderRadius:18,background:'var(--sur)',color:'var(--mu)',border:'1px solid var(--bdr)',cursor:'pointer',fontSize:14,flexShrink:0}}>↺</button>
-        <button onClick={tSave} disabled={tElapsed<60} style={{padding:'8px 16px',borderRadius:8,background:tElapsed>=60?'var(--su)':'var(--sur)',color:tElapsed>=60?'#fff':'var(--dm)',border:'none',cursor:tElapsed>=60?'pointer':'not-allowed',fontSize:12,fontWeight:600,flexShrink:0}}>
-          ✓ Lưu {tElapsed>=60?`(${fmtS(tElapsed)})`:''}</button>
       </div>
-      {tRunning&&<div className="tx-dm" style={{marginTop:6,fontSize:10}}>💡 Timer vẫn chạy khi bạn chuyển tab — chỉ dừng khi bấm ⏸ hoặc ✓ Lưu</div>}
-    </div>
+      {pickedCourse&&(pickedCurrent
+        ?<CurrentSessionCard course={pickedCourse} session={pickedCurrent} journalEntries={journalEntries}
+            onUpdateCourse={ch=>updCourse(pickedCourse.id,ch)} upd={upd} data={data} awardXP={awardXP}/>
+        :<div className="card" style={{textAlign:'center',padding:16}}>
+            <div className="tx-dm">Môn này chưa có Session nào đang chờ học.</div>
+            <div className="tx-dm" style={{marginTop:4}}>Vào trang <strong style={{color:'var(--tx)'}}>Môn học → {pickedCourse.name}</strong> để tạo Session mới.</div>
+          </div>)}
+    </div>}
 
-    {/* ── Journal blocks — 2-col grid by subject ── */}
-    {Object.keys(grouped).length===0&&<div style={{textAlign:'center',padding:'24px 0',color:'var(--dm)'}}><div style={{fontSize:28,marginBottom:8}}>📓</div><div>Chưa có phiên học. Nhấn "+ Phiên học mới" để bắt đầu!</div></div>}
+    <div className="lbl" style={{marginBottom:8}}>📚 LỊCH SỬ</div>
+    {Object.keys(grouped).length===0&&<div style={{textAlign:'center',padding:'24px 0',color:'var(--dm)'}}><div style={{fontSize:28,marginBottom:8}}>📓</div>Chưa có buổi học nào hoàn thành.</div>}
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
-      {allS.filter(s=>grouped[s.id]).map(subj=>{
-        const entries=grouped[subj.id];const wh=weekH[subj.id]||0;const s=allS.find(x=>x.id===subj.id);
-        return<div key={subj.id} style={{background:'var(--card)',border:'1px solid var(--bdr)',borderRadius:11,overflow:'hidden'}}>
-          {/* Block header */}
-          <div style={{background:(s?.color||'#7C6EF5')+'18',borderBottom:'1px solid var(--bdr)',padding:'9px 12px',display:'flex',alignItems:'center',gap:7}}>
-            <span style={{fontSize:16}}>{subj.emoji}</span>
-            <div style={{flex:1}}>
-              <div style={{fontSize:12,fontWeight:700,color:'var(--tx)'}}>{subj.name}</div>
-              <div style={{fontSize:9,color:'var(--dm)'}}>{entries.length} phiên</div>
-            </div>
-            {wh>0&&<div style={{textAlign:'right'}}>
-              <div style={{fontSize:15,fontWeight:800,color:s?.color||'var(--acc)',lineHeight:1}}>{wh.toFixed(1)}h</div>
-              <div style={{fontSize:8,color:'var(--dm)',fontWeight:600}}>TUẦN NÀY</div>
-            </div>}
+      {courses.filter(c=>grouped[c.id]).map(c=>{
+        const entries=grouped[c.id];const weekMin=weekMinutesByCourse[c.id]||0;
+        return<div key={c.id} style={{background:'var(--card)',border:'1px solid var(--bdr)',borderRadius:11,overflow:'hidden'}}>
+          <div style={{background:c.color+'18',borderBottom:'1px solid var(--bdr)',padding:'9px 12px',display:'flex',alignItems:'center',gap:7}}>
+            <span style={{fontSize:16}}>{c.emoji}</span>
+            <div style={{flex:1}}><div style={{fontSize:12,fontWeight:700}}>{c.name}</div><div className="tx-dm">{entries.length} buổi</div></div>
+            {weekMin>0&&<div style={{textAlign:'right'}}><div style={{fontSize:15,fontWeight:800,color:c.color,lineHeight:1}}>{(weekMin/60).toFixed(1)}h</div><div style={{fontSize:8,color:'var(--dm)',fontWeight:600}}>TUẦN NÀY</div></div>}
           </div>
-          {/* Entries sorted by date desc */}
           <div style={{padding:'8px',maxHeight:340,overflowY:'auto'}}>
-            {entries.map(entry=>{
-              const isOpen=expandId===entry.id;
-              const done=(entry.planItems||[]).filter(p=>p.status==='done').length;
-              const total=(entry.planItems||[]).length;
-              return<div key={entry.id} style={{marginBottom:6,borderBottom:'1px solid var(--bdr)',paddingBottom:6}}>
-                <div style={{display:'flex',gap:6,alignItems:'center',cursor:'pointer'}} onClick={()=>setExpandId(isOpen?null:entry.id)}>
-                  <div style={{flex:1}}>
-                    <div style={{fontSize:11,fontWeight:500}}>{fmtL(entry.date)}</div>
-                    <div className="tx-dm" style={{fontSize:10}}>{entry.hours>0?`${entry.hours.toFixed(1)}h · `:''}
-                      {done}/{total} tasks</div>
-                  </div>
-                  {total>0&&<div style={{width:36,height:4,background:'var(--dm)',borderRadius:2,overflow:'hidden',flexShrink:0}}>
-                    <div style={{width:`${Math.round(done/total*100)}%`,height:'100%',background:'var(--su)',borderRadius:2}}/></div>}
-                  <span style={{fontSize:10,color:'var(--dm)'}}>{isOpen?'▲':'▼'}</span>
-                </div>
-                {isOpen&&<div style={{marginTop:8,paddingTop:8,borderTop:'1px solid var(--bdr)'}}>
-                  {(entry.planItems||[]).map(item=><div key={item.id} className="jitem">
-                    <div className="jstatus" style={{borderColor:STATUS_COLOR[item.status],background:item.status==='done'?'var(--su)':item.status==='doing'?'var(--wa)':'transparent',color:item.status!=='todo'?'#fff':'var(--dm)'}}
-                      onClick={()=>updItem(entry.id,item.id,{status:STATUS_CYCLE[item.status]})}>
-                      {STATUS_ICON[item.status]}
-                    </div>
-                    <span style={{flex:1,fontSize:11,textDecoration:item.status==='done'?'line-through':'none',opacity:item.status==='done'?.6:1}}>{item.text}</span>
-                  </div>)}
-                  <textarea value={entry.notes||''} onChange={e=>updEntry(entry.id,{notes:e.target.value})} placeholder="Ghi chú sau buổi học..." rows={2}
-                    style={{width:'100%',background:'var(--sur)',border:'1px solid var(--bdr)',borderRadius:6,padding:'5px',color:'var(--tx)',fontSize:11,outline:'none',fontFamily:'inherit',resize:'vertical',boxSizing:'border-box',marginTop:6}}/>
-                  <button className="btn-g btn-sm" style={{marginTop:5,color:'var(--cr)',fontSize:10}} onClick={()=>upd({studyJournal:journal.filter(e=>e.id!==entry.id)})}>Xoá phiên này</button>
-                </div>}
-              </div>;})}
+            {entries.map(j=><div key={j.id} style={{marginBottom:8,paddingBottom:8,borderBottom:'1px solid var(--bdr)'}}>
+              <div className="flex-sb" style={{marginBottom:3}}>
+                <span style={{fontSize:11,fontWeight:600}}>{sessionTitle(j.courseId,j.sessionId)}</span>
+                <span className="tx-dm">{fmt(j.date)}</span>
+              </div>
+              <div style={{display:'flex',gap:8,fontSize:9,color:'var(--mu)',marginBottom:4}}>
+                {j.duration>0&&<span>⏱️ {j.duration}p</span>}
+                {j.difficulty>0&&<span>💪 Độ khó {j.difficulty}/5</span>}
+                {j.confidenceAfter>0&&<span>⭐ Confidence {j.confidenceAfter}/5</span>}
+                {j.conceptTouches?.length>0&&<span>📚 {j.conceptTouches.length} concept</span>}
+              </div>
+              {j.reflection&&<div style={{fontSize:11,color:'var(--tx)',lineHeight:1.4,marginBottom:3}}>{j.reflection}</div>}
+              {j.questionsRaised&&<div style={{fontSize:10,color:'var(--wa)',marginBottom:3}}>❓ {j.questionsRaised}</div>}
+              {j.actionItems?.length>0&&<div style={{fontSize:10,color:'var(--mu)'}}>✅ {j.actionItems.length} action item{j.actionItems.length>1?'s':''}</div>}
+            </div>)}
           </div>
         </div>;})}
     </div>
-
-    {showNew&&<div className="ov" onClick={()=>setShowNew(false)}><div className="modal" onClick={e=>e.stopPropagation()}>
-      <div className="flex-sb" style={{marginBottom:12}}><span style={{fontSize:14,fontWeight:500}}>📓 Phiên học mới</span><button className="btn-g btn-sm" onClick={()=>setShowNew(false)}>✕</button></div>
-      <div className="tx-dm" style={{marginBottom:3}}>Môn học</div>
-      <select className="sel" value={newSubj} onChange={e=>{setNewSubj(e.target.value);pullTopics(e.target.value);}} style={{marginBottom:10}}>
-        {allS.map(s=><option key={s.id} value={s.id}>{s.emoji} {s.name}</option>)}
-      </select>
-      <div className="flex-sb" style={{marginBottom:6}}><div className="tx-dm">Kế hoạch</div>
-        <button className="btn-g btn-sm" onClick={()=>pullTopics(newSubj)} style={{fontSize:10}}>📚 Lấy từ môn học</button>
-      </div>
-      {planItems.map((item,i)=><div key={item.id} style={{display:'flex',gap:5,marginBottom:5}}>
-        <input className="inp" value={item.text} onChange={e=>setPlanItems(p=>p.map((x,j)=>j===i?{...x,text:e.target.value}:x))} placeholder={`Task ${i+1}...`} style={{flex:1,fontSize:12}}
-          onKeyDown={e=>e.key==='Enter'&&setPlanItems(p=>[...p,{id:uid(),text:'',status:'todo',src:'manual'}])}/>
-        <button style={{background:'none',border:'none',cursor:'pointer',color:'var(--dm)',fontSize:13}} onClick={()=>setPlanItems(p=>p.filter((_,j)=>j!==i))}>×</button>
-      </div>)}
-      <button className="btn-g btn-sm" style={{marginBottom:12}} onClick={()=>setPlanItems(p=>[...p,{id:uid(),text:'',status:'todo',src:'manual'}])}>+ Thêm task</button>
-      <div style={{display:'flex',gap:8}}><button className="btn-p" style={{flex:1,justifyContent:'center'}} onClick={createSession}>Tạo phiên học</button><button className="btn-g" onClick={()=>setShowNew(false)}>Huỷ</button></div>
-    </div></div>}
   </div>;}
-

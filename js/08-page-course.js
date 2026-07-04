@@ -174,24 +174,334 @@ function CoursePhaseGantt({course,onUpdate,data}){
 
 /* ── Sessions placeholder — Learning Objectives moved here per approved v12.1 spec
    (Session is the learning unit; Objectives now live inside Session, not Course).
-   Full Session blueprint editor + "Current Session" entry point is Bước 2.
-   Any pre-existing course-level objectives are preserved read-only below. ── */
-function SessionsPlaceholderBlock({course}){
-  const legacy=course.legacyLearningObjectives||[];
-  const sessions=course.sessions||[];
-  return<div className="card" style={{marginBottom:10,borderStyle:'dashed'}}>
-    <div className="flex-sb" style={{marginBottom:legacy.length?8:0}}>
-      <div className="lbl" style={{margin:0}}>🎯 SESSIONS & LEARNING OBJECTIVES</div>
-      <span style={{fontSize:9,background:'var(--acc2)',color:'var(--acc)',borderRadius:4,padding:'2px 6px',fontWeight:600}}>Sắp ra mắt — Bước 2</span>
+   Session is single-use per approved decision: each planned study occasion is
+   its own Session object (Draft→Planned→In Progress→Completed→Reviewed); to
+   study the same Concepts again later, create a NEW Session rather than reuse. ── */
+const SESSION_STATUS_META={
+  draft:{emoji:'📝',color:'var(--dm)',label:'Draft'},
+  planned:{emoji:'📌',color:'var(--in)',label:'Đã lên kế hoạch'},
+  in_progress:{emoji:'▶️',color:'var(--acc)',label:'Đang học'},
+  completed:{emoji:'✅',color:'var(--su)',label:'Hoàn thành'},
+  reviewed:{emoji:'🔍',color:'#8B7EF5',label:'Đã review'},
+};
+
+/* ── Live timer for an in-progress Session — reads `session.activeStartedAt`
+   (a persisted Date.now() timestamp), NOT component-local refs. This means the
+   timer survives page navigation, tab close/reopen, even switching devices —
+   the running total is always recomputed fresh from data, never lost. ── */
+function useSessionTimer(session){
+  const [tick,setTick]=useState(0);
+  useEffect(()=>{
+    if(session?.status!=='in_progress'||!session.activeStartedAt)return;
+    const iv=setInterval(()=>setTick(t=>t+1),1000);
+    return()=>clearInterval(iv);
+  },[session?.status,session?.activeStartedAt]);
+  if(!session||session.status!=='in_progress'||!session.activeStartedAt)return 0;
+  return Math.floor((Date.now()-session.activeStartedAt)/1000);
+}
+
+/* ── Start Study: creates the Journal Entry (execution instance) immediately,
+   marks Session in_progress, and stamps the wall-clock start time. ── */
+function startSession(course,session,onUpdateCourse,upd,data,awardXP){
+  const journalEntryId=uid();
+  const checklist=(session.customTodos||[]).map(t=>({id:uid(),text:t.text,done:false}));
+  const entry={
+    id:journalEntryId,date:TODAY,courseId:course.id,sessionId:session.id,duration:0,
+    reflection:'',questionsRaised:'',actionItems:[],confidenceAfter:0,difficulty:0,notes:'',
+    conceptTouches:[],checklist,status:'in_progress',
+  };
+  upd({journalEntries:[entry,...(data.journalEntries||[])]});
+  onUpdateCourse({sessions:(course.sessions||[]).map(s=>s.id===session.id?{...s,status:'in_progress',activeStartedAt:Date.now(),activeJournalEntryId:journalEntryId}:s)});
+}
+
+/* ── Finish Study: stop the clock, save reflection + per-concept touches,
+   close out both the Session and its Journal Entry. ── */
+function finishSession(course,session,formData,onUpdateCourse,upd,data,awardXP){
+  const durationMin=session.activeStartedAt?Math.round((Date.now()-session.activeStartedAt)/60000):0;
+  const journalEntries=data.journalEntries||[];
+  const entry=journalEntries.find(j=>j.id===session.activeJournalEntryId);
+  const updatedEntry={
+    ...(entry||{id:session.activeJournalEntryId||uid(),date:TODAY,courseId:course.id,sessionId:session.id,checklist:[]}),
+    duration:durationMin,reflection:formData.reflection,questionsRaised:formData.questionsRaised,
+    actionItems:formData.actionItems,confidenceAfter:formData.confidenceAfter,difficulty:formData.difficulty,
+    notes:formData.notes,conceptTouches:formData.conceptTouches,checklist:formData.checklist,status:'completed',
+  };
+  upd({journalEntries:entry?journalEntries.map(j=>j.id===entry.id?updatedEntry:j):[updatedEntry,...journalEntries]});
+
+  // Push each rated concept touch into the Concept's history (drives mastery calc)
+  const concepts=(course.concepts||[]).map(c=>{
+    const t=formData.conceptTouches.find(ct=>ct.conceptId===c.id);
+    if(!t)return c;
+    return{...c,touches:[...(c.touches||[]),{understanding:t.understanding,confidence:t.confidence,timestamp:Date.now(),sessionId:session.id}]};
+  });
+  onUpdateCourse({
+    concepts,
+    sessions:(course.sessions||[]).map(s=>s.id===session.id?{...s,status:'completed',activeStartedAt:null,activeJournalEntryId:null}:s),
+  });
+  if(awardXP)awardXP(XPR.session_complete+Math.round(durationMin/10),`✅ Hoàn thành: ${session.title}`);
+}
+
+function markReviewed(course,session,onUpdateCourse){
+  onUpdateCourse({sessions:(course.sessions||[]).map(s=>s.id===session.id?{...s,status:'reviewed'}:s)});
+}
+
+/* ── Session blueprint editor: title, duration, objectives (lightweight + expandable
+   detail), concepts covered, resources, custom todos. ── */
+function SessionEditorModal({session,concepts,onSave,onClose}){
+  const [f,setF]=useState(session?{
+    title:session.title,estimatedDuration:session.estimatedDuration||30,
+    objectives:session.objectives||[],conceptIds:session.conceptIds||[],
+    resources:session.resources||[],customTodos:session.customTodos||[],
+  }:{title:'',estimatedDuration:30,objectives:[],conceptIds:[],resources:[],customTodos:[]});
+  const [newObjText,setNewObjText]=useState('');
+  const [expandedObjId,setExpandedObjId]=useState(null);
+  const [newResource,setNewResource]=useState('');
+  const [newTodo,setNewTodo]=useState('');
+  const s=(k,v)=>setF(p=>({...p,[k]:v}));
+  const togConcept=(id)=>setF(p=>({...p,conceptIds:p.conceptIds.includes(id)?p.conceptIds.filter(x=>x!==id):[...p.conceptIds,id]}));
+  const addObjective=()=>{if(!newObjText.trim())return;setF(p=>({...p,objectives:[...p.objectives,{id:uid(),text:newObjText.trim(),description:'',expectedOutcome:'',conceptIds:[],estimatedTime:'',assessmentCriteria:''}]}));setNewObjText('');};
+  const updObjective=(id,ch)=>setF(p=>({...p,objectives:p.objectives.map(o=>o.id===id?{...o,...ch}:o)}));
+  const delObjective=(id)=>setF(p=>({...p,objectives:p.objectives.filter(o=>o.id!==id)}));
+  const addResource=()=>{if(!newResource.trim())return;setF(p=>({...p,resources:[...p.resources,{id:uid(),text:newResource.trim()}]}));setNewResource('');};
+  const delResource=(id)=>setF(p=>({...p,resources:p.resources.filter(r=>r.id!==id)}));
+  const addTodo=()=>{if(!newTodo.trim())return;setF(p=>({...p,customTodos:[...p.customTodos,{id:uid(),text:newTodo.trim()}]}));setNewTodo('');};
+  const delTodo=(id)=>setF(p=>({...p,customTodos:p.customTodos.filter(t=>t.id!==id)}));
+  const save=(status)=>{if(!f.title.trim())return;onSave(session?{...session,...f}:{id:uid(),status:status||'draft',activeStartedAt:null,activeJournalEntryId:null,...f});};
+
+  // Group concepts by chapter for a more readable picker (chapterId passed separately)
+  return<div className="ov" onClick={onClose}><div className="modal" style={{maxWidth:480,maxHeight:'85vh',overflowY:'auto'}} onClick={e=>e.stopPropagation()}>
+    <div className="flex-sb" style={{marginBottom:12}}><span style={{fontSize:15,fontWeight:600}}>{session?'✏️ Sửa Session':'+ Session mới'}</span><button className="btn-g btn-sm" onClick={onClose}>✕</button></div>
+
+    <div className="tx-dm" style={{marginBottom:2}}>Tên Session *</div>
+    <input className="inp" value={f.title} onChange={e=>s('title',e.target.value)} placeholder="VD: Buổi 1 — MLE cơ bản" style={{marginBottom:10}} autoFocus/>
+
+    <div className="tx-dm" style={{marginBottom:2}}>Thời lượng ước tính (phút)</div>
+    <input type="number" className="inp" value={f.estimatedDuration} onChange={e=>s('estimatedDuration',parseInt(e.target.value)||0)} style={{marginBottom:14}}/>
+
+    <div className="tx-dm" style={{marginBottom:5,fontWeight:600}}>🎯 Learning Objectives</div>
+    {f.objectives.map((o,i)=>{
+      const exp=expandedObjId===o.id;
+      return<div key={o.id} style={{background:'var(--sur)',borderRadius:7,padding:'7px 9px',marginBottom:6}}>
+        <div style={{display:'flex',gap:6,alignItems:'center'}}>
+          <span style={{fontSize:11,flex:1}}>{i+1}. {o.text}</span>
+          <button onClick={()=>setExpandedObjId(exp?null:o.id)} style={{background:'none',border:'none',cursor:'pointer',color:'var(--acc)',fontSize:10}}>{exp?'thu gọn ▲':'chi tiết ▼'}</button>
+          <button onClick={()=>delObjective(o.id)} style={{background:'none',border:'none',cursor:'pointer',color:'var(--dm)',fontSize:12}}>×</button>
+        </div>
+        {exp&&<div style={{marginTop:8,paddingTop:8,borderTop:'1px solid var(--bdr)'}}>
+          <input className="inp" value={o.description} onChange={e=>updObjective(o.id,{description:e.target.value})} placeholder="Mô tả chi tiết..." style={{marginBottom:5,fontSize:11}}/>
+          <input className="inp" value={o.expectedOutcome} onChange={e=>updObjective(o.id,{expectedOutcome:e.target.value})} placeholder="Kết quả mong đợi (Expected Outcome)..." style={{marginBottom:5,fontSize:11}}/>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:5,marginBottom:5}}>
+            <input className="inp" value={o.estimatedTime} onChange={e=>updObjective(o.id,{estimatedTime:e.target.value})} placeholder="Thời gian (phút)" style={{fontSize:11}}/>
+            <input className="inp" value={o.assessmentCriteria} onChange={e=>updObjective(o.id,{assessmentCriteria:e.target.value})} placeholder="Tiêu chí đánh giá..." style={{fontSize:11}}/>
+          </div>
+          {concepts.length>0&&<div style={{display:'flex',flexWrap:'wrap',gap:4}}>
+            {concepts.map(c=><button key={c.id} onClick={()=>updObjective(o.id,{conceptIds:(o.conceptIds||[]).includes(c.id)?o.conceptIds.filter(x=>x!==c.id):[...(o.conceptIds||[]),c.id]})}
+              style={{fontSize:9,padding:'2px 6px',borderRadius:5,border:`1px solid ${(o.conceptIds||[]).includes(c.id)?'var(--acc)':'var(--bdr)'}`,background:(o.conceptIds||[]).includes(c.id)?'var(--acc2)':'transparent',color:(o.conceptIds||[]).includes(c.id)?'var(--acc)':'var(--mu)',cursor:'pointer'}}>{c.title}</button>)}
+          </div>}
+        </div>}
+      </div>;})}
+    <div style={{display:'flex',gap:5,marginBottom:14}}>
+      <input className="inp" value={newObjText} onChange={e=>setNewObjText(e.target.value)} placeholder="Thêm objective..." style={{flex:1,fontSize:11}} onKeyDown={e=>e.key==='Enter'&&addObjective()}/>
+      <button className="btn-p btn-sm" onClick={addObjective}>+</button>
     </div>
-    <div className="tx-dm" style={{marginBottom:legacy.length?8:0}}>
-      Session sẽ là đơn vị học chính: 1 Session = 1 buổi học, phủ nhiều Concept, có Objectives riêng, resources, và nút "Bắt đầu học". {sessions.length>0&&`Hiện có ${sessions.length} session blueprint.`}
-    </div>
-    {legacy.length>0&&<div style={{marginTop:8,paddingTop:8,borderTop:'1px solid var(--bdr)'}}>
-      <div className="tx-dm" style={{marginBottom:5,fontWeight:600}}>📥 Objectives cũ (sẽ gắn vào Session khi Bước 2 hoàn thành):</div>
-      {legacy.map((o,i)=><div key={o.id} style={{fontSize:11,color:'var(--mu)',padding:'3px 0'}}>{i+1}. {o.text}</div>)}
+
+    <div className="tx-dm" style={{marginBottom:5,fontWeight:600}}>📚 Concepts phủ trong Session này</div>
+    {concepts.length===0&&<div className="tx-dm" style={{marginBottom:14}}>Chưa có Concept nào trong môn — thêm ở phần Chapters & Concepts trước.</div>}
+    {concepts.length>0&&<div style={{display:'flex',flexWrap:'wrap',gap:5,marginBottom:14}}>
+      {concepts.map(c=><button key={c.id} onClick={()=>togConcept(c.id)} style={{fontSize:10,padding:'4px 8px',borderRadius:6,border:`1px solid ${f.conceptIds.includes(c.id)?'var(--acc)':'var(--bdr)'}`,background:f.conceptIds.includes(c.id)?'var(--acc2)':'transparent',color:f.conceptIds.includes(c.id)?'var(--acc)':'var(--mu)',cursor:'pointer'}}>{c.title}</button>)}
     </div>}
+
+    <div className="tx-dm" style={{marginBottom:5,fontWeight:600}}>📎 Resources</div>
+    {f.resources.map(r=><div key={r.id} style={{display:'flex',gap:6,alignItems:'center',marginBottom:4}}>
+      <span style={{fontSize:11,flex:1}}>🔗 {r.text}</span><button onClick={()=>delResource(r.id)} style={{background:'none',border:'none',cursor:'pointer',color:'var(--dm)',fontSize:12}}>×</button>
+    </div>)}
+    <div style={{display:'flex',gap:5,marginBottom:14}}>
+      <input className="inp" value={newResource} onChange={e=>setNewResource(e.target.value)} placeholder="Link/tên tài liệu..." style={{flex:1,fontSize:11}} onKeyDown={e=>e.key==='Enter'&&addResource()}/>
+      <button className="btn-p btn-sm" onClick={addResource}>+</button>
+    </div>
+
+    <div className="tx-dm" style={{marginBottom:5,fontWeight:600}}>☑️ Custom Todos</div>
+    {f.customTodos.map(t=><div key={t.id} style={{display:'flex',gap:6,alignItems:'center',marginBottom:4}}>
+      <span style={{fontSize:11,flex:1}}>{t.text}</span><button onClick={()=>delTodo(t.id)} style={{background:'none',border:'none',cursor:'pointer',color:'var(--dm)',fontSize:12}}>×</button>
+    </div>)}
+    <div style={{display:'flex',gap:5,marginBottom:18}}>
+      <input className="inp" value={newTodo} onChange={e=>setNewTodo(e.target.value)} placeholder="VD: Đọc slide, làm bài tập..." style={{flex:1,fontSize:11}} onKeyDown={e=>e.key==='Enter'&&addTodo()}/>
+      <button className="btn-p btn-sm" onClick={addTodo}>+</button>
+    </div>
+
+    <div style={{display:'flex',gap:8}}>
+      <button className="btn-p" style={{flex:1,justifyContent:'center'}} onClick={()=>save('planned')}>{session?'Lưu':'Lưu & Lên kế hoạch'}</button>
+      {!session&&<button className="btn-g" onClick={()=>save('draft')}>Lưu Draft</button>}
+      <button className="btn-g" onClick={onClose}>Huỷ</button>
+    </div>
+  </div></div>;}
+
+/* ── Finish Study modal: reflection, questions, action items, confidence/difficulty,
+   per-concept touch ratings, notes. This is where mastery actually updates. ── */
+function FinishSessionModal({session,concepts,currentChecklist,onSave,onClose}){
+  const sessionConcepts=concepts.filter(c=>(session.conceptIds||[]).includes(c.id));
+  const [reflection,setReflection]=useState('');
+  const [questionsRaised,setQuestionsRaised]=useState('');
+  const [actionItems,setActionItems]=useState([]);
+  const [newAction,setNewAction]=useState('');
+  const [confidenceAfter,setConfidenceAfter]=useState(3);
+  const [difficulty,setDifficulty]=useState(3);
+  const [notes,setNotes]=useState('');
+  const [checklist]=useState(currentChecklist||[]);
+  const [touches,setTouches]=useState(sessionConcepts.map(c=>({conceptId:c.id,understanding:3,confidence:3})));
+  const setTouch=(conceptId,k,v)=>setTouches(p=>p.map(t=>t.conceptId===conceptId?{...t,[k]:v}:t));
+  const addAction=()=>{if(!newAction.trim())return;setActionItems(p=>[...p,{id:uid(),text:newAction.trim(),done:false}]);setNewAction('');};
+
+  const Picker=({value,onChange,activeColor})=><div style={{display:'flex',gap:5}}>
+    {[1,2,3,4,5].map(n=><button key={n} onClick={()=>onChange(n)} style={{flex:1,padding:'7px 0',borderRadius:6,border:`1.5px solid ${value>=n?activeColor:'var(--bdr)'}`,background:value>=n?activeColor+'22':'transparent',color:value>=n?activeColor:'var(--dm)',cursor:'pointer',fontSize:12,fontWeight:700}}>{n}</button>)}
+  </div>;
+
+  return<div className="ov" onClick={onClose}><div className="modal" style={{maxWidth:440,maxHeight:'85vh',overflowY:'auto'}} onClick={e=>e.stopPropagation()}>
+    <div className="flex-sb" style={{marginBottom:4}}><span style={{fontSize:15,fontWeight:600}}>🏁 Kết thúc buổi học</span><button className="btn-g btn-sm" onClick={onClose}>✕</button></div>
+    <div className="tx-dm" style={{marginBottom:16}}>{session.title}</div>
+
+    {sessionConcepts.length>0&&<div style={{marginBottom:16}}>
+      <div className="tx-dm" style={{marginBottom:6,fontWeight:600}}>📚 Đánh giá từng Concept đã học</div>
+      {sessionConcepts.map(c=>{const t=touches.find(x=>x.conceptId===c.id);return<div key={c.id} style={{background:'var(--sur)',borderRadius:8,padding:'8px 10px',marginBottom:6}}>
+        <div style={{fontSize:11,fontWeight:600,marginBottom:6}}>{c.title}</div>
+        <div style={{fontSize:9,color:'var(--dm)',marginBottom:3}}>Understanding</div>
+        <Picker value={t.understanding} onChange={v=>setTouch(c.id,'understanding',v)} activeColor="var(--acc)"/>
+        <div style={{fontSize:9,color:'var(--dm)',margin:'6px 0 3px'}}>Confidence</div>
+        <Picker value={t.confidence} onChange={v=>setTouch(c.id,'confidence',v)} activeColor="var(--wa)"/>
+      </div>;})}
+    </div>}
+
+    <div className="tx-dm" style={{marginBottom:4}}>📝 Reflection — hôm nay học được gì?</div>
+    <textarea value={reflection} onChange={e=>setReflection(e.target.value)} rows={3} placeholder="Tóm tắt buổi học..."
+      style={{width:'100%',background:'var(--sur)',border:'1px solid var(--bdr)',borderRadius:7,padding:'7px 9px',color:'var(--tx)',fontSize:12,outline:'none',fontFamily:'inherit',resize:'vertical',boxSizing:'border-box',marginBottom:10}}/>
+
+    <div className="tx-dm" style={{marginBottom:4}}>❓ Questions Raised (tùy chọn)</div>
+    <textarea value={questionsRaised} onChange={e=>setQuestionsRaised(e.target.value)} rows={2} placeholder="Câu hỏi còn thắc mắc..."
+      style={{width:'100%',background:'var(--sur)',border:'1px solid var(--bdr)',borderRadius:7,padding:'7px 9px',color:'var(--tx)',fontSize:12,outline:'none',fontFamily:'inherit',resize:'vertical',boxSizing:'border-box',marginBottom:10}}/>
+
+    <div className="tx-dm" style={{marginBottom:4}}>✅ Action Items (tùy chọn)</div>
+    {actionItems.map(a=><div key={a.id} style={{display:'flex',gap:6,alignItems:'center',marginBottom:4}}>
+      <span style={{fontSize:11,flex:1}}>{a.text}</span><button onClick={()=>setActionItems(p=>p.filter(x=>x.id!==a.id))} style={{background:'none',border:'none',cursor:'pointer',color:'var(--dm)',fontSize:12}}>×</button>
+    </div>)}
+    <div style={{display:'flex',gap:5,marginBottom:14}}>
+      <input className="inp" value={newAction} onChange={e=>setNewAction(e.target.value)} placeholder="VD: Làm lại bài tập 3..." style={{flex:1,fontSize:11}} onKeyDown={e=>e.key==='Enter'&&addAction()}/>
+      <button className="btn-p btn-sm" onClick={addAction}>+</button>
+    </div>
+
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:14}}>
+      <div><div className="tx-dm" style={{marginBottom:5}}>Confidence sau buổi học</div><Picker value={confidenceAfter} onChange={setConfidenceAfter} activeColor="var(--su)"/></div>
+      <div><div className="tx-dm" style={{marginBottom:5}}>Độ khó</div><Picker value={difficulty} onChange={setDifficulty} activeColor="var(--cr)"/></div>
+    </div>
+
+    <div className="tx-dm" style={{marginBottom:4}}>Ghi chú thêm (tùy chọn)</div>
+    <textarea value={notes} onChange={e=>setNotes(e.target.value)} rows={2} placeholder="..."
+      style={{width:'100%',background:'var(--sur)',border:'1px solid var(--bdr)',borderRadius:7,padding:'7px 9px',color:'var(--tx)',fontSize:12,outline:'none',fontFamily:'inherit',resize:'vertical',boxSizing:'border-box',marginBottom:16}}/>
+
+    <button className="btn-p" style={{width:'100%',justifyContent:'center'}} onClick={()=>onSave({reflection,questionsRaised,actionItems,confidenceAfter,difficulty,notes,conceptTouches:touches,checklist})}>✅ Lưu & Hoàn thành</button>
+  </div></div>;}
+
+/* ── Current Session card — the primary "start studying" entry point, per spec.
+   Shows live timer if in_progress, checklist ticking, Kết thúc button. ── */
+function CurrentSessionCard({course,session,journalEntries,onUpdateCourse,upd,data,awardXP}){
+  const [showFinish,setShowFinish]=useState(false);
+  const elapsed=useSessionTimer(session);
+  const entry=(journalEntries||[]).find(j=>j.id===session.activeJournalEntryId);
+  const meta=SESSION_STATUS_META[session.status]||SESSION_STATUS_META.draft;
+  const toggleChecklistItem=(itemId)=>{
+    if(!entry)return;
+    const checklist=(entry.checklist||[]).map(c=>c.id===itemId?{...c,done:!c.done}:c);
+    upd({journalEntries:(data.journalEntries||[]).map(j=>j.id===entry.id?{...j,checklist}:j)});
+  };
+  const objectives=session.objectives||[];
+  const concepts=(course.concepts||[]).filter(c=>(session.conceptIds||[]).includes(c.id));
+
+  return<div className="card" style={{marginBottom:10,border:`1.5px solid ${meta.color}55`,background:session.status==='in_progress'?meta.color+'0d':'var(--card)'}}>
+    <div className="flex-sb" style={{marginBottom:8}}>
+      <div style={{display:'flex',alignItems:'center',gap:7}}>
+        <span style={{fontSize:15}}>{meta.emoji}</span>
+        <div>
+          <div style={{fontSize:13,fontWeight:700}}>{session.title}</div>
+          <div className="tx-dm">{meta.label} · ~{session.estimatedDuration||0} phút</div>
+        </div>
+      </div>
+      {session.status==='in_progress'&&<div style={{fontSize:22,fontWeight:800,color:meta.color,fontFamily:'monospace',fontVariantNumeric:'tabular-nums'}}>{fmtS(elapsed)}</div>}
+    </div>
+
+    {objectives.length>0&&<div style={{marginBottom:8}}>
+      <div className="tx-dm" style={{marginBottom:3,fontWeight:600}}>🎯 Objectives</div>
+      {objectives.map(o=><div key={o.id} style={{fontSize:11,padding:'2px 0'}}>• {o.text}</div>)}
+    </div>}
+    {concepts.length>0&&<div style={{marginBottom:8,display:'flex',flexWrap:'wrap',gap:4}}>
+      {concepts.map(c=><span key={c.id} style={{fontSize:9,background:'var(--sur)',borderRadius:4,padding:'2px 6px',color:'var(--mu)'}}>{c.title}</span>)}
+    </div>}
+    {session.resources?.length>0&&<div className="tx-dm" style={{marginBottom:8}}>📎 {session.resources.map(r=>r.text).join(' · ')}</div>}
+
+    {session.status==='in_progress'&&entry?.checklist?.length>0&&<div style={{marginBottom:10}}>
+      {entry.checklist.map(item=><div key={item.id} onClick={()=>toggleChecklistItem(item.id)} style={{display:'flex',gap:7,alignItems:'center',padding:'4px 0',cursor:'pointer'}}>
+        <div style={{width:16,height:16,borderRadius:4,border:`1.5px solid ${item.done?meta.color:'var(--bdr)'}`,background:item.done?meta.color:'transparent',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>{item.done&&<span style={{color:'#fff',fontSize:9}}>✓</span>}</div>
+        <span style={{fontSize:11,textDecoration:item.done?'line-through':'none',opacity:item.done?.55:1}}>{item.text}</span>
+      </div>)}
+    </div>}
+
+    {session.status==='planned'&&<button className="btn-p" style={{width:'100%',justifyContent:'center',padding:'10px'}} onClick={()=>startSession(course,session,onUpdateCourse,upd,data,awardXP)}>▶ Bắt đầu học</button>}
+    {session.status==='in_progress'&&<button className="btn-p" style={{width:'100%',justifyContent:'center',padding:'10px',background:'var(--su)'}} onClick={()=>setShowFinish(true)}>🏁 Kết thúc buổi học</button>}
+    {session.status==='completed'&&<button className="btn-g btn-sm" onClick={()=>markReviewed(course,session,onUpdateCourse)}>🔍 Đánh dấu đã Review</button>}
+
+    {showFinish&&<FinishSessionModal session={session} concepts={course.concepts||[]} currentChecklist={entry?.checklist||[]}
+      onSave={formData=>{finishSession(course,session,formData,onUpdateCourse,upd,data,awardXP);setShowFinish(false);}}
+      onClose={()=>setShowFinish(false)}/>}
   </div>;}
+
+/* ── Session Library — replaces the Bước-1 placeholder. Shows the Current Session
+   (in_progress, else earliest planned) prominently, other sessions grouped below,
+   and lets you create new Session blueprints. ── */
+function SessionLibraryBlock({course,data,upd,awardXP,onUpdate}){
+  const [showEditor,setShowEditor]=useState(false);
+  const [editSession,setEditSession]=useState(null);
+  const sessions=course.sessions||[];
+  const legacy=course.legacyLearningObjectives||[];
+  const inProgress=sessions.find(s=>s.status==='in_progress');
+  const planned=sessions.filter(s=>s.status==='planned').sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));
+  const current=inProgress||planned[0]||null;
+  const others=sessions.filter(s=>s.id!==current?.id);
+  const saveSession=(f)=>{
+    const withMeta=f.createdAt?f:{...f,createdAt:Date.now()};
+    if(sessions.find(s=>s.id===f.id))onUpdate({sessions:sessions.map(s=>s.id===f.id?withMeta:s)});
+    else onUpdate({sessions:[...sessions,withMeta]});
+    setShowEditor(false);setEditSession(null);
+  };
+  const delSession=(id)=>{if(confirm('Xoá Session này?'))onUpdate({sessions:sessions.filter(s=>s.id!==id)});};
+
+  return<div style={{marginBottom:10}}>
+    <div className="flex-sb" style={{marginBottom:8}}>
+      <div className="lbl" style={{margin:0}}>🎯 CURRENT SESSION</div>
+      <button className="btn-g btn-sm" onClick={()=>setShowEditor(true)}>+ Session mới</button>
+    </div>
+
+    {current?<CurrentSessionCard course={course} session={current} journalEntries={data.journalEntries} onUpdateCourse={onUpdate} upd={upd} data={data} awardXP={awardXP}/>
+      :<div className="card" style={{marginBottom:10,textAlign:'center',padding:18}}>
+        <div className="tx-dm" style={{marginBottom:8}}>Chưa có Session nào đang chờ học.</div>
+        <button className="btn-p btn-sm" onClick={()=>setShowEditor(true)}>+ Tạo Session đầu tiên</button>
+      </div>}
+
+    {others.length>0&&<div className="card" style={{marginBottom:10}}>
+      <div className="lbl" style={{marginBottom:8}}>📋 CÁC SESSION KHÁC</div>
+      {others.map(s=>{const meta=SESSION_STATUS_META[s.status]||SESSION_STATUS_META.draft;return<div key={s.id} style={{display:'flex',alignItems:'center',gap:8,padding:'6px 0',borderBottom:'1px solid var(--bdr)'}}>
+        <span style={{fontSize:12}}>{meta.emoji}</span>
+        <div style={{flex:1}}><div style={{fontSize:11,fontWeight:500}}>{s.title}</div><div className="tx-dm">{meta.label}</div></div>
+        <button onClick={()=>setEditSession(s)} style={{background:'none',border:'none',cursor:'pointer',color:'var(--dm)',fontSize:11,opacity:.5}}>✏️</button>
+        <button onClick={()=>delSession(s.id)} style={{background:'none',border:'none',cursor:'pointer',color:'var(--dm)',fontSize:13,opacity:.35}}>×</button>
+      </div>;})}
+    </div>}
+
+    {legacy.length>0&&<div className="card" style={{marginBottom:10,borderStyle:'dashed'}}>
+      <div className="tx-dm" style={{fontWeight:600,marginBottom:5}}>📥 Objectives cũ (chưa gắn Session):</div>
+      {legacy.map((o,i)=><div key={o.id} style={{fontSize:11,color:'var(--mu)',padding:'2px 0'}}>{i+1}. {o.text}</div>)}
+    </div>}
+
+    {(showEditor||editSession)&&<SessionEditorModal session={editSession} concepts={course.concepts||[]} onSave={saveSession} onClose={()=>{setShowEditor(false);setEditSession(null);}}/>}
+  </div>;}
+
 
 /* ── Concept Touch modal — the ADHD-friendly "Ghi nhanh" shortcut.
    Rate Understanding + Confidence (1-5 each, tap-to-select) → one touch
@@ -381,7 +691,7 @@ function CourseScheduleView({course,data}){
   </div>;}
 
 /* ── Course Detail — full page assembly ── */
-function CourseDetail({course,data,onBack,onUpdate,onDelete}){
+function CourseDetail({course,data,upd,awardXP,onBack,onUpdate,onDelete}){
   const [showEditor,setShowEditor]=useState(false);
   const [showAddChapter,setShowAddChapter]=useState(false);
   const [editChapter,setEditChapter]=useState(null);
@@ -445,7 +755,7 @@ function CourseDetail({course,data,onBack,onUpdate,onDelete}){
     <CourseAttendance course={course} onUpdate={onUpdate}/>
     <CourseScheduleView course={course} data={data}/>
     <CoursePhaseGantt course={course} onUpdate={onUpdate} data={data}/>
-    <SessionsPlaceholderBlock course={course}/>
+    <SessionLibraryBlock course={course} data={data} upd={upd} awardXP={awardXP} onUpdate={onUpdate}/>
 
     <div className="flex-sb" style={{marginBottom:8}}>
       <div className="lbl" style={{margin:0}}>📚 CHAPTERS & CONCEPTS</div>
@@ -471,7 +781,7 @@ function CourseDetail({course,data,onBack,onUpdate,onDelete}){
   </div>;}
 
 /* ── Courses list page (wrapper — mostly unchanged) ── */
-function CoursesPage({data,upd,initCourseId}){
+function CoursesPage({data,upd,awardXP,initCourseId}){
   const [sel,setSel]=useState(initCourseId||null);
   const [showEditor,setShowEditor]=useState(false);
   const [showArchived,setShowArchived]=useState(false);
@@ -482,7 +792,7 @@ function CoursesPage({data,upd,initCourseId}){
   const addCourse=(f)=>{upd({courses:[...data.courses,f]});setShowEditor(false);setSel(f.id);};
   const visible=data.courses.filter(c=>showArchived?c.archived:!c.archived);
 
-  if(course)return<CourseDetail course={course} data={data} onBack={()=>setSel(null)} onUpdate={updCourse} onDelete={delCourse}/>;
+  if(course)return<CourseDetail course={course} data={data} upd={upd} awardXP={awardXP} onBack={()=>setSel(null)} onUpdate={updCourse} onDelete={delCourse}/>;
 
   return<div>
     <div className="flex-sb" style={{marginBottom:4}}><div className="h1">📚 Môn học</div><button className="btn-p btn-sm" onClick={()=>setShowEditor(true)}>+ Thêm môn</button></div>

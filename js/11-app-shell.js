@@ -77,8 +77,8 @@ function App(){
     if(page==='uniphase')return<UniPhasePage data={data} upd={upd}/>;
     if(page==='timeline')return<TimelinePage data={data}/>;
     if(page==='timer')return<TimerPage data={data} upd={upd} awardXP={awardXP} nav={nav}/>;
-    if(page==='journal')return<StudyJournalPage data={data} upd={upd}/>;
-    if(page==='courses')return<CoursesPage data={data} upd={upd} initCourseId={pageParams.courseId}/>;
+    if(page==='journal')return<StudyJournalPage data={data} upd={upd} awardXP={awardXP}/>;
+    if(page==='courses')return<CoursesPage data={data} upd={upd} awardXP={awardXP} initCourseId={pageParams.courseId}/>;
     if(page==='language')return<LanguagePage data={data} upd={upd}/>;
     if(page==='studylog')return<StudyLogPage data={data} upd={upd}/>;
     if(page==='habits')return<HabitsPage data={data} upd={upd}/>;
