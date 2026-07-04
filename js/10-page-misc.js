@@ -790,6 +790,25 @@ function StudyJournalPage({data,upd,awardXP}){
   const courses=data.courses.filter(c=>!c.archived);
   const [pickedCourseId,setPickedCourseId]=useState(courses[0]?.id||'');
   const journalEntries=data.journalEntries||[];
+  const [editSession,setEditSession]=useState(null); // {course, session}
+  const [editEntry,setEditEntry]=useState(null); // journal entry being manually edited
+  const delEntry=(entry)=>{if(confirm('Xoá Journal Entry này?'))upd({journalEntries:(data.journalEntries||[]).filter(j=>j.id!==entry.id)});};
+  const saveEditedEntry=(updatedEntry)=>{
+    upd({journalEntries:(data.journalEntries||[]).map(j=>j.id===updatedEntry.id?updatedEntry:j)});
+    // Keep the underlying Concept.touches in sync with any edited understanding/confidence
+    // (matched by sessionId, since that's the link between a touch and the session that logged it).
+    const course=data.courses.find(c=>c.id===updatedEntry.courseId);
+    if(course){
+      const concepts=(course.concepts||[]).map(c=>{
+        const editedTouch=updatedEntry.conceptTouches.find(t=>t.conceptId===c.id);
+        if(!editedTouch)return c;
+        const touches=(c.touches||[]).map(t=>t.sessionId===updatedEntry.sessionId?{...t,understanding:editedTouch.understanding,confidence:editedTouch.confidence}:t);
+        return{...c,touches};
+      });
+      updCourse(course.id,{concepts});
+    }
+    setEditEntry(null);
+  };
 
   // If ANY course has an in-progress session, surface it first regardless of picker
   // (so finishing a session you started elsewhere is always one click away here).
@@ -798,6 +817,16 @@ function StudyJournalPage({data,upd,awardXP}){
 
   const pickedCourse=courses.find(c=>c.id===pickedCourseId);
   const updCourse=(courseId,ch)=>upd({courses:data.courses.map(c=>c.id===courseId?{...c,...ch}:c)});
+  const delSessionFrom=(course,session)=>{
+    if(!confirm('Xoá Session này? Journal Entry liên quan (nếu có) cũng sẽ bị xoá.'))return;
+    updCourse(course.id,{sessions:(course.sessions||[]).filter(s=>s.id!==session.id)});
+    upd({journalEntries:(data.journalEntries||[]).filter(j=>j.sessionId!==session.id)});
+  };
+  const saveEditedSession=(f)=>{
+    const{course}=editSession;
+    updCourse(course.id,{sessions:(course.sessions||[]).map(s=>s.id===f.id?f:s)});
+    setEditSession(null);
+  };
 
   const pickedSessions=pickedCourse?.sessions||[];
   const pickedPlanned=pickedSessions.filter(s=>s.status==='planned').sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));
@@ -819,7 +848,8 @@ function StudyJournalPage({data,upd,awardXP}){
     {globalInProgress&&<div style={{marginBottom:14}}>
       <div className="lbl" style={{marginBottom:6}}>▶️ ĐANG HỌC ({globalInProgress.course.emoji} {globalInProgress.course.name})</div>
       <CurrentSessionCard course={globalInProgress.course} session={globalInProgress.session} journalEntries={journalEntries}
-        onUpdateCourse={ch=>updCourse(globalInProgress.course.id,ch)} upd={upd} data={data} awardXP={awardXP}/>
+        onUpdateCourse={ch=>updCourse(globalInProgress.course.id,ch)} upd={upd} data={data} awardXP={awardXP}
+        onEdit={()=>setEditSession({course:globalInProgress.course,session:globalInProgress.session})} onDelete={()=>delSessionFrom(globalInProgress.course,globalInProgress.session)}/>
     </div>}
 
     {!globalInProgress&&<div style={{marginBottom:14}}>
@@ -832,7 +862,8 @@ function StudyJournalPage({data,upd,awardXP}){
       </div>
       {pickedCourse&&(pickedCurrent
         ?<CurrentSessionCard course={pickedCourse} session={pickedCurrent} journalEntries={journalEntries}
-            onUpdateCourse={ch=>updCourse(pickedCourse.id,ch)} upd={upd} data={data} awardXP={awardXP}/>
+            onUpdateCourse={ch=>updCourse(pickedCourse.id,ch)} upd={upd} data={data} awardXP={awardXP}
+            onEdit={()=>setEditSession({course:pickedCourse,session:pickedCurrent})} onDelete={()=>delSessionFrom(pickedCourse,pickedCurrent)}/>
         :<div className="card" style={{textAlign:'center',padding:16}}>
             <div className="tx-dm">Môn này chưa có Session nào đang chờ học.</div>
             <div className="tx-dm" style={{marginTop:4}}>Vào trang <strong style={{color:'var(--tx)'}}>Môn học → {pickedCourse.name}</strong> để tạo Session mới.</div>
@@ -854,7 +885,11 @@ function StudyJournalPage({data,upd,awardXP}){
             {entries.map(j=><div key={j.id} style={{marginBottom:8,paddingBottom:8,borderBottom:'1px solid var(--bdr)'}}>
               <div className="flex-sb" style={{marginBottom:3}}>
                 <span style={{fontSize:11,fontWeight:600}}>{sessionTitle(j.courseId,j.sessionId)}</span>
-                <span className="tx-dm">{fmt(j.date)}</span>
+                <div style={{display:'flex',alignItems:'center',gap:6}}>
+                  <span className="tx-dm">{fmt(j.date)}</span>
+                  <button onClick={()=>setEditEntry(j)} style={{background:'none',border:'none',cursor:'pointer',color:'var(--dm)',fontSize:10,opacity:.5}}>✏️</button>
+                  <button onClick={()=>delEntry(j)} style={{background:'none',border:'none',cursor:'pointer',color:'var(--dm)',fontSize:12,opacity:.4}}>×</button>
+                </div>
               </div>
               <div style={{display:'flex',gap:8,fontSize:9,color:'var(--mu)',marginBottom:4}}>
                 {j.duration>0&&<span>⏱️ {j.duration}p</span>}
@@ -869,4 +904,7 @@ function StudyJournalPage({data,upd,awardXP}){
           </div>
         </div>;})}
     </div>
+
+    {editSession&&<SessionEditorModal session={editSession.session} concepts={editSession.course.concepts||[]} onSave={saveEditedSession} onClose={()=>setEditSession(null)}/>}
+    {editEntry&&<EditJournalEntryModal entry={editEntry} concepts={(data.courses.find(c=>c.id===editEntry.courseId)?.concepts)||[]} onSave={saveEditedEntry} onClose={()=>setEditEntry(null)}/>}
   </div>;}

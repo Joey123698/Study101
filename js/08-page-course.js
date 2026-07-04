@@ -189,15 +189,21 @@ const SESSION_STATUS_META={
    (a persisted Date.now() timestamp), NOT component-local refs. This means the
    timer survives page navigation, tab close/reopen, even switching devices —
    the running total is always recomputed fresh from data, never lost. ── */
+/* ── Live elapsed time = accumulatedSeconds (from previous active periods,
+   frozen while paused) + time since the CURRENT active period started (0 if
+   currently paused, i.e. activeStartedAt is null). Multi-day sessions: pause
+   today, resume tomorrow — nothing is lost, nothing keeps ticking while away. ── */
 function useSessionTimer(session){
   const [tick,setTick]=useState(0);
+  const isRunning=session?.status==='in_progress'&&!!session.activeStartedAt;
   useEffect(()=>{
-    if(session?.status!=='in_progress'||!session.activeStartedAt)return;
+    if(!isRunning)return;
     const iv=setInterval(()=>setTick(t=>t+1),1000);
     return()=>clearInterval(iv);
-  },[session?.status,session?.activeStartedAt]);
-  if(!session||session.status!=='in_progress'||!session.activeStartedAt)return 0;
-  return Math.floor((Date.now()-session.activeStartedAt)/1000);
+  },[isRunning,session?.activeStartedAt]);
+  if(!session||session.status!=='in_progress')return session?.accumulatedSeconds||0;
+  const base=session.accumulatedSeconds||0;
+  return session.activeStartedAt?base+Math.floor((Date.now()-session.activeStartedAt)/1000):base;
 }
 
 /* ── Start Study: creates the Journal Entry (execution instance) immediately,
@@ -211,13 +217,28 @@ function startSession(course,session,onUpdateCourse,upd,data,awardXP){
     conceptTouches:[],checklist,status:'in_progress',
   };
   upd({journalEntries:[entry,...(data.journalEntries||[])]});
-  onUpdateCourse({sessions:(course.sessions||[]).map(s=>s.id===session.id?{...s,status:'in_progress',activeStartedAt:Date.now(),activeJournalEntryId:journalEntryId}:s)});
+  onUpdateCourse({sessions:(course.sessions||[]).map(s=>s.id===session.id?{...s,status:'in_progress',activeStartedAt:Date.now(),accumulatedSeconds:0,activeJournalEntryId:journalEntryId}:s)});
+}
+
+/* ── Pause: freeze accumulated time, clear the running start-stamp so the
+   clock stops ticking (both live-display and true source of truth) until
+   Resume is pressed. Safe across days/devices — nothing depends on the tab
+   staying open. ── */
+function pauseSession(course,session,onUpdateCourse){
+  if(!session.activeStartedAt)return; // already paused
+  const addedSeconds=Math.floor((Date.now()-session.activeStartedAt)/1000);
+  onUpdateCourse({sessions:(course.sessions||[]).map(s=>s.id===session.id?{...s,activeStartedAt:null,accumulatedSeconds:(s.accumulatedSeconds||0)+addedSeconds}:s)});
+}
+function resumeSession(course,session,onUpdateCourse){
+  onUpdateCourse({sessions:(course.sessions||[]).map(s=>s.id===session.id?{...s,activeStartedAt:Date.now()}:s)});
 }
 
 /* ── Finish Study: stop the clock, save reflection + per-concept touches,
-   close out both the Session and its Journal Entry. ── */
+   close out both the Session and its Journal Entry. Works whether currently
+   running or paused — total = accumulated + any live delta. ── */
 function finishSession(course,session,formData,onUpdateCourse,upd,data,awardXP){
-  const durationMin=session.activeStartedAt?Math.round((Date.now()-session.activeStartedAt)/60000):0;
+  const totalSeconds=(session.accumulatedSeconds||0)+(session.activeStartedAt?Math.floor((Date.now()-session.activeStartedAt)/1000):0);
+  const durationMin=Math.round(totalSeconds/60);
   const journalEntries=data.journalEntries||[];
   const entry=journalEntries.find(j=>j.id===session.activeJournalEntryId);
   const updatedEntry={
@@ -236,7 +257,7 @@ function finishSession(course,session,formData,onUpdateCourse,upd,data,awardXP){
   });
   onUpdateCourse({
     concepts,
-    sessions:(course.sessions||[]).map(s=>s.id===session.id?{...s,status:'completed',activeStartedAt:null,activeJournalEntryId:null}:s),
+    sessions:(course.sessions||[]).map(s=>s.id===session.id?{...s,status:'completed',activeStartedAt:null,accumulatedSeconds:0,activeJournalEntryId:null}:s),
   });
   if(awardXP)awardXP(XPR.session_complete+Math.round(durationMin/10),`✅ Hoàn thành: ${session.title}`);
 }
@@ -400,13 +421,86 @@ function FinishSessionModal({session,concepts,currentChecklist,onSave,onClose}){
     <button className="btn-p" style={{width:'100%',justifyContent:'center'}} onClick={()=>onSave({reflection,questionsRaised,actionItems,confidenceAfter,difficulty,notes,conceptTouches:touches,checklist})}>✅ Lưu & Hoàn thành</button>
   </div></div>;}
 
+/* ── Manual edit for an already-completed Journal Entry — per user's request,
+   nothing should be permanently locked after Finish. Editing understanding/
+   confidence here also syncs the matching Concept.touches entry (by sessionId)
+   so mastery stays consistent with whatever you correct here. ── */
+function EditJournalEntryModal({entry,concepts,onSave,onClose}){
+  const [f,setF]=useState({
+    duration:entry.duration||0,reflection:entry.reflection||'',questionsRaised:entry.questionsRaised||'',
+    actionItems:entry.actionItems||[],confidenceAfter:entry.confidenceAfter||0,difficulty:entry.difficulty||0,
+    notes:entry.notes||'',conceptTouches:entry.conceptTouches||[],
+  });
+  const [newAction,setNewAction]=useState('');
+  const s=(k,v)=>setF(p=>({...p,[k]:v}));
+  const setTouch=(conceptId,k,v)=>setF(p=>({...p,conceptTouches:p.conceptTouches.map(t=>t.conceptId===conceptId?{...t,[k]:v}:t)}));
+  const addAction=()=>{if(!newAction.trim())return;setF(p=>({...p,actionItems:[...p.actionItems,{id:uid(),text:newAction.trim(),done:false}]}));setNewAction('');};
+  const delAction=(id)=>setF(p=>({...p,actionItems:p.actionItems.filter(a=>a.id!==id)}));
+  const togAction=(id)=>setF(p=>({...p,actionItems:p.actionItems.map(a=>a.id===id?{...a,done:!a.done}:a)}));
+
+  const Picker=({value,onChange,activeColor})=><div style={{display:'flex',gap:5}}>
+    {[1,2,3,4,5].map(n=><button key={n} onClick={()=>onChange(n)} style={{flex:1,padding:'7px 0',borderRadius:6,border:`1.5px solid ${value>=n?activeColor:'var(--bdr)'}`,background:value>=n?activeColor+'22':'transparent',color:value>=n?activeColor:'var(--dm)',cursor:'pointer',fontSize:12,fontWeight:700}}>{n}</button>)}
+  </div>;
+
+  return<div className="ov" onClick={onClose}><div className="modal" style={{maxWidth:440,maxHeight:'85vh',overflowY:'auto'}} onClick={e=>e.stopPropagation()}>
+    <div className="flex-sb" style={{marginBottom:14}}><span style={{fontSize:15,fontWeight:600}}>✏️ Sửa Journal Entry</span><button className="btn-g btn-sm" onClick={onClose}>✕</button></div>
+
+    <div className="tx-dm" style={{marginBottom:2}}>Thời lượng (phút)</div>
+    <input type="number" className="inp" value={f.duration} onChange={e=>s('duration',parseInt(e.target.value)||0)} style={{marginBottom:12}}/>
+
+    {f.conceptTouches.length>0&&<div style={{marginBottom:14}}>
+      <div className="tx-dm" style={{marginBottom:6,fontWeight:600}}>📚 Sửa đánh giá Concept</div>
+      {f.conceptTouches.map(t=>{const c=concepts.find(x=>x.id===t.conceptId);return<div key={t.conceptId} style={{background:'var(--sur)',borderRadius:8,padding:'8px 10px',marginBottom:6}}>
+        <div style={{fontSize:11,fontWeight:600,marginBottom:6}}>{c?.title||'(concept đã xoá)'}</div>
+        <div style={{fontSize:9,color:'var(--dm)',marginBottom:3}}>Understanding</div>
+        <Picker value={t.understanding} onChange={v=>setTouch(t.conceptId,'understanding',v)} activeColor="var(--acc)"/>
+        <div style={{fontSize:9,color:'var(--dm)',margin:'6px 0 3px'}}>Confidence</div>
+        <Picker value={t.confidence} onChange={v=>setTouch(t.conceptId,'confidence',v)} activeColor="var(--wa)"/>
+      </div>;})}
+    </div>}
+
+    <div className="tx-dm" style={{marginBottom:4}}>📝 Reflection</div>
+    <textarea value={f.reflection} onChange={e=>s('reflection',e.target.value)} rows={3}
+      style={{width:'100%',background:'var(--sur)',border:'1px solid var(--bdr)',borderRadius:7,padding:'7px 9px',color:'var(--tx)',fontSize:12,outline:'none',fontFamily:'inherit',resize:'vertical',boxSizing:'border-box',marginBottom:10}}/>
+
+    <div className="tx-dm" style={{marginBottom:4}}>❓ Questions Raised</div>
+    <textarea value={f.questionsRaised} onChange={e=>s('questionsRaised',e.target.value)} rows={2}
+      style={{width:'100%',background:'var(--sur)',border:'1px solid var(--bdr)',borderRadius:7,padding:'7px 9px',color:'var(--tx)',fontSize:12,outline:'none',fontFamily:'inherit',resize:'vertical',boxSizing:'border-box',marginBottom:10}}/>
+
+    <div className="tx-dm" style={{marginBottom:4}}>✅ Action Items</div>
+    {f.actionItems.map(a=><div key={a.id} style={{display:'flex',gap:6,alignItems:'center',marginBottom:4}}>
+      <div onClick={()=>togAction(a.id)} style={{width:14,height:14,borderRadius:3,border:`1.5px solid ${a.done?'var(--su)':'var(--bdr)'}`,background:a.done?'var(--su)':'transparent',cursor:'pointer',flexShrink:0}}/>
+      <span style={{fontSize:11,flex:1,textDecoration:a.done?'line-through':'none',opacity:a.done?.6:1}}>{a.text}</span>
+      <button onClick={()=>delAction(a.id)} style={{background:'none',border:'none',cursor:'pointer',color:'var(--dm)',fontSize:12}}>×</button>
+    </div>)}
+    <div style={{display:'flex',gap:5,marginBottom:14}}>
+      <input className="inp" value={newAction} onChange={e=>setNewAction(e.target.value)} placeholder="Thêm action item..." style={{flex:1,fontSize:11}} onKeyDown={e=>e.key==='Enter'&&addAction()}/>
+      <button className="btn-p btn-sm" onClick={addAction}>+</button>
+    </div>
+
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:14}}>
+      <div><div className="tx-dm" style={{marginBottom:5}}>Confidence sau buổi học</div><Picker value={f.confidenceAfter} onChange={v=>s('confidenceAfter',v)} activeColor="var(--su)"/></div>
+      <div><div className="tx-dm" style={{marginBottom:5}}>Độ khó</div><Picker value={f.difficulty} onChange={v=>s('difficulty',v)} activeColor="var(--cr)"/></div>
+    </div>
+
+    <div className="tx-dm" style={{marginBottom:4}}>Ghi chú thêm</div>
+    <textarea value={f.notes} onChange={e=>s('notes',e.target.value)} rows={2}
+      style={{width:'100%',background:'var(--sur)',border:'1px solid var(--bdr)',borderRadius:7,padding:'7px 9px',color:'var(--tx)',fontSize:12,outline:'none',fontFamily:'inherit',resize:'vertical',boxSizing:'border-box',marginBottom:16}}/>
+
+    <div style={{display:'flex',gap:8}}>
+      <button className="btn-p" style={{flex:1,justifyContent:'center'}} onClick={()=>onSave({...entry,...f})}>Lưu thay đổi</button>
+      <button className="btn-g" onClick={onClose}>Huỷ</button>
+    </div>
+  </div></div>;}
+
 /* ── Current Session card — the primary "start studying" entry point, per spec.
    Shows live timer if in_progress, checklist ticking, Kết thúc button. ── */
-function CurrentSessionCard({course,session,journalEntries,onUpdateCourse,upd,data,awardXP}){
+function CurrentSessionCard({course,session,journalEntries,onUpdateCourse,upd,data,awardXP,onEdit,onDelete}){
   const [showFinish,setShowFinish]=useState(false);
   const elapsed=useSessionTimer(session);
   const entry=(journalEntries||[]).find(j=>j.id===session.activeJournalEntryId);
   const meta=SESSION_STATUS_META[session.status]||SESSION_STATUS_META.draft;
+  const isPaused=session.status==='in_progress'&&!session.activeStartedAt;
   const toggleChecklistItem=(itemId)=>{
     if(!entry)return;
     const checklist=(entry.checklist||[]).map(c=>c.id===itemId?{...c,done:!c.done}:c);
@@ -415,16 +509,22 @@ function CurrentSessionCard({course,session,journalEntries,onUpdateCourse,upd,da
   const objectives=session.objectives||[];
   const concepts=(course.concepts||[]).filter(c=>(session.conceptIds||[]).includes(c.id));
 
-  return<div className="card" style={{marginBottom:10,border:`1.5px solid ${meta.color}55`,background:session.status==='in_progress'?meta.color+'0d':'var(--card)'}}>
+  return<div className="card" style={{marginBottom:10,border:`1.5px solid ${meta.color}55`,background:session.status==='in_progress'&&!isPaused?meta.color+'0d':'var(--card)'}}>
     <div className="flex-sb" style={{marginBottom:8}}>
       <div style={{display:'flex',alignItems:'center',gap:7}}>
-        <span style={{fontSize:15}}>{meta.emoji}</span>
+        <span style={{fontSize:15}}>{isPaused?'⏸️':meta.emoji}</span>
         <div>
           <div style={{fontSize:13,fontWeight:700}}>{session.title}</div>
-          <div className="tx-dm">{meta.label} · ~{session.estimatedDuration||0} phút</div>
+          <div className="tx-dm">{isPaused?'Đã tạm dừng':meta.label} · ~{session.estimatedDuration||0} phút</div>
         </div>
       </div>
-      {session.status==='in_progress'&&<div style={{fontSize:22,fontWeight:800,color:meta.color,fontFamily:'monospace',fontVariantNumeric:'tabular-nums'}}>{fmtS(elapsed)}</div>}
+      <div style={{display:'flex',alignItems:'center',gap:8}}>
+        {session.status==='in_progress'&&<div style={{fontSize:22,fontWeight:800,color:isPaused?'var(--dm)':meta.color,fontFamily:'monospace',fontVariantNumeric:'tabular-nums'}}>{fmtS(elapsed)}</div>}
+        {(onEdit||onDelete)&&<div style={{display:'flex',gap:4}}>
+          {onEdit&&<button onClick={onEdit} style={{background:'none',border:'none',cursor:'pointer',color:'var(--dm)',fontSize:11,opacity:.5}}>✏️</button>}
+          {onDelete&&<button onClick={onDelete} style={{background:'none',border:'none',cursor:'pointer',color:'var(--dm)',fontSize:13,opacity:.35}}>×</button>}
+        </div>}
+      </div>
     </div>
 
     {objectives.length>0&&<div style={{marginBottom:8}}>
@@ -444,7 +544,12 @@ function CurrentSessionCard({course,session,journalEntries,onUpdateCourse,upd,da
     </div>}
 
     {session.status==='planned'&&<button className="btn-p" style={{width:'100%',justifyContent:'center',padding:'10px'}} onClick={()=>startSession(course,session,onUpdateCourse,upd,data,awardXP)}>▶ Bắt đầu học</button>}
-    {session.status==='in_progress'&&<button className="btn-p" style={{width:'100%',justifyContent:'center',padding:'10px',background:'var(--su)'}} onClick={()=>setShowFinish(true)}>🏁 Kết thúc buổi học</button>}
+    {session.status==='in_progress'&&<div style={{display:'flex',gap:8}}>
+      {isPaused
+        ?<button className="btn-p" style={{flex:1,justifyContent:'center',padding:'10px'}} onClick={()=>resumeSession(course,session,onUpdateCourse)}>▶ Tiếp tục</button>
+        :<button className="btn-g" style={{flex:1,justifyContent:'center',padding:'10px'}} onClick={()=>pauseSession(course,session,onUpdateCourse)}>⏸ Tạm dừng</button>}
+      <button className="btn-p" style={{flex:1,justifyContent:'center',padding:'10px',background:'var(--su)'}} onClick={()=>setShowFinish(true)}>🏁 Kết thúc</button>
+    </div>}
     {session.status==='completed'&&<button className="btn-g btn-sm" onClick={()=>markReviewed(course,session,onUpdateCourse)}>🔍 Đánh dấu đã Review</button>}
 
     {showFinish&&<FinishSessionModal session={session} concepts={course.concepts||[]} currentChecklist={entry?.checklist||[]}
@@ -470,7 +575,11 @@ function SessionLibraryBlock({course,data,upd,awardXP,onUpdate}){
     else onUpdate({sessions:[...sessions,withMeta]});
     setShowEditor(false);setEditSession(null);
   };
-  const delSession=(id)=>{if(confirm('Xoá Session này?'))onUpdate({sessions:sessions.filter(s=>s.id!==id)});};
+  const delSession=(id)=>{
+    if(!confirm('Xoá Session này? Journal Entry liên quan (nếu có) cũng sẽ bị xoá.'))return;
+    onUpdate({sessions:sessions.filter(s=>s.id!==id)});
+    upd({journalEntries:(data.journalEntries||[]).filter(j=>j.sessionId!==id)});
+  };
 
   return<div style={{marginBottom:10}}>
     <div className="flex-sb" style={{marginBottom:8}}>
@@ -478,7 +587,8 @@ function SessionLibraryBlock({course,data,upd,awardXP,onUpdate}){
       <button className="btn-g btn-sm" onClick={()=>setShowEditor(true)}>+ Session mới</button>
     </div>
 
-    {current?<CurrentSessionCard course={course} session={current} journalEntries={data.journalEntries} onUpdateCourse={onUpdate} upd={upd} data={data} awardXP={awardXP}/>
+    {current?<CurrentSessionCard course={course} session={current} journalEntries={data.journalEntries} onUpdateCourse={onUpdate} upd={upd} data={data} awardXP={awardXP}
+        onEdit={()=>setEditSession(current)} onDelete={()=>delSession(current.id)}/>
       :<div className="card" style={{marginBottom:10,textAlign:'center',padding:18}}>
         <div className="tx-dm" style={{marginBottom:8}}>Chưa có Session nào đang chờ học.</div>
         <button className="btn-p btn-sm" onClick={()=>setShowEditor(true)}>+ Tạo Session đầu tiên</button>
