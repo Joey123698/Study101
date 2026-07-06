@@ -185,6 +185,7 @@ function DashboardPage({data,upd,nav,awardXP}){
   const daysToExam=nextExam?daysTo(nextExam.examDate):null;
 
   return<div>
+    <NextActionBanner data={data} upd={upd} awardXP={awardXP} nav={nav}/>
     {courseTop}
     {data.settings?.bannerUrl&&<div style={{width:'100%',height:200,borderRadius:12,marginBottom:14,overflow:'hidden',position:'relative',flexShrink:0}}>
       <img src={data.settings.bannerUrl} alt="banner" style={{width:'100%',height:'100%',objectFit:'cover',objectPosition:`${data.settings.bannerPosX??50}% ${data.settings.bannerPosY??50}%`,display:'block'}}

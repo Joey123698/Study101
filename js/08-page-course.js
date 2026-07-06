@@ -207,8 +207,16 @@ function useSessionTimer(session){
 }
 
 /* ── Start Study: creates the Journal Entry (execution instance) immediately,
-   marks Session in_progress, and stamps the wall-clock start time. ── */
+   marks Session in_progress, and stamps the wall-clock start time.
+   v12.2: also pauses any OTHER in_progress Session system-wide (not just
+   within this course) — fixes a latent bug where starting a Session in one
+   course while another course still had one running left BOTH timers
+   ticking in parallel. Enforces "only one Session RUNNING at a time"
+   (matches SPEC-001's business rule from the reviewed architecture docs).
+   Because of this, the update now writes the full `courses` array directly
+   instead of going through the single-course `onUpdateCourse` helper. ── */
 function startSession(course,session,onUpdateCourse,upd,data,awardXP){
+  const now=Date.now();
   const journalEntryId=uid();
   const checklist=(session.customTodos||[]).map(t=>({id:uid(),text:t.text,done:false}));
   const entry={
@@ -216,8 +224,9 @@ function startSession(course,session,onUpdateCourse,upd,data,awardXP){
     reflection:'',questionsRaised:'',actionItems:[],confidenceAfter:0,difficulty:0,notes:'',
     conceptTouches:[],checklist,status:'in_progress',
   };
-  upd({journalEntries:[entry,...(data.journalEntries||[])]});
-  onUpdateCourse({sessions:(course.sessions||[]).map(s=>s.id===session.id?{...s,status:'in_progress',activeStartedAt:Date.now(),accumulatedSeconds:0,activeJournalEntryId:journalEntryId}:s)});
+  const paused=pauseAllOtherRunningSessions(data.courses||[],course.id,session.id,now);
+  const courses=paused.map(c=>c.id!==course.id?c:{...c,sessions:(c.sessions||[]).map(s=>s.id===session.id?{...s,status:'in_progress',activeStartedAt:now,accumulatedSeconds:0,activeJournalEntryId:journalEntryId}:s)});
+  upd({courses,journalEntries:[entry,...(data.journalEntries||[])]});
 }
 
 /* ── Pause: freeze accumulated time, clear the running start-stamp so the
@@ -229,8 +238,15 @@ function pauseSession(course,session,onUpdateCourse){
   const addedSeconds=Math.floor((Date.now()-session.activeStartedAt)/1000);
   onUpdateCourse({sessions:(course.sessions||[]).map(s=>s.id===session.id?{...s,activeStartedAt:null,accumulatedSeconds:(s.accumulatedSeconds||0)+addedSeconds}:s)});
 }
-function resumeSession(course,session,onUpdateCourse){
-  onUpdateCourse({sessions:(course.sessions||[]).map(s=>s.id===session.id?{...s,activeStartedAt:Date.now()}:s)});
+/* ── v12.2: Resume goes through the same pauseAllOtherRunningSessions guard
+   as startSession — otherwise resuming a PAUSED session while a different
+   course's session is RUNNING would reopen the exact parallel-timer bug
+   through a second door. ── */
+function resumeSession(course,session,onUpdateCourse,upd,data){
+  const now=Date.now();
+  const paused=pauseAllOtherRunningSessions(data.courses||[],course.id,session.id,now);
+  const courses=paused.map(c=>c.id!==course.id?c:{...c,sessions:(c.sessions||[]).map(s=>s.id===session.id?{...s,activeStartedAt:now}:s)});
+  upd({courses});
 }
 
 /* ── Finish Study: stop the clock, save reflection + per-concept touches,
@@ -515,7 +531,7 @@ function CurrentSessionCard({course,session,journalEntries,onUpdateCourse,upd,da
         <span style={{fontSize:15}}>{isPaused?'⏸️':meta.emoji}</span>
         <div>
           <div style={{fontSize:13,fontWeight:700}}>{session.title}</div>
-          <div className="tx-dm">{isPaused?'Đã tạm dừng':meta.label} · ~{session.estimatedDuration||0} phút</div>
+          <div className="tx-dm">{isPaused?'Đã tạm dừng':meta.label} · ~{session.estimatedDuration||0} phút{session.currentPosition?` · 📍 ${session.currentPosition}`:''}</div>
         </div>
       </div>
       <div style={{display:'flex',alignItems:'center',gap:8}}>
@@ -543,10 +559,20 @@ function CurrentSessionCard({course,session,journalEntries,onUpdateCourse,upd,da
       </div>)}
     </div>}
 
+    {/* ── Current Position: điểm dừng chính xác (câu X/Y, video mm:ss...) — lưu khi
+       rời khỏi ô (onBlur), không lưu theo từng phím gõ. Giúp Resume không cần nhớ
+       tay đang học tới đâu, đúng nguyên tắc "StudyOS remembers, learner doesn't". ── */}
+    {session.status==='in_progress'&&<div style={{marginBottom:10}}>
+      <div className="tx-dm" style={{marginBottom:3,fontWeight:600}}>📍 Đang ở đâu?</div>
+      <input className="inp" defaultValue={session.currentPosition||''} placeholder="VD: Câu 11/30, Video 18:24, Trang 42..."
+        onBlur={e=>{if(e.target.value!==(session.currentPosition||''))onUpdateCourse({sessions:(course.sessions||[]).map(s=>s.id===session.id?{...s,currentPosition:e.target.value}:s)});}}
+        style={{fontSize:12}}/>
+    </div>}
+
     {session.status==='planned'&&<button className="btn-p" style={{width:'100%',justifyContent:'center',padding:'10px'}} onClick={()=>startSession(course,session,onUpdateCourse,upd,data,awardXP)}>▶ Bắt đầu học</button>}
     {session.status==='in_progress'&&<div style={{display:'flex',gap:8}}>
       {isPaused
-        ?<button className="btn-p" style={{flex:1,justifyContent:'center',padding:'10px'}} onClick={()=>resumeSession(course,session,onUpdateCourse)}>▶ Tiếp tục</button>
+        ?<button className="btn-p" style={{flex:1,justifyContent:'center',padding:'10px'}} onClick={()=>resumeSession(course,session,onUpdateCourse,upd,data)}>▶ Tiếp tục</button>
         :<button className="btn-g" style={{flex:1,justifyContent:'center',padding:'10px'}} onClick={()=>pauseSession(course,session,onUpdateCourse)}>⏸ Tạm dừng</button>}
       <button className="btn-p" style={{flex:1,justifyContent:'center',padding:'10px',background:'var(--su)'}} onClick={()=>setShowFinish(true)}>🏁 Kết thúc</button>
     </div>}
@@ -587,7 +613,7 @@ function SessionLibraryBlock({course,data,upd,awardXP,onUpdate}){
       <button className="btn-g btn-sm" onClick={()=>setShowEditor(true)}>+ Session mới</button>
     </div>
 
-    {current?<CurrentSessionCard course={course} session={current} journalEntries={data.journalEntries} onUpdateCourse={onUpdate} upd={upd} data={data} awardXP={awardXP}
+    {current?<CurrentSessionCard key={current.id} course={course} session={current} journalEntries={data.journalEntries} onUpdateCourse={onUpdate} upd={upd} data={data} awardXP={awardXP}
         onEdit={()=>setEditSession(current)} onDelete={()=>delSession(current.id)}/>
       :<div className="card" style={{marginBottom:10,textAlign:'center',padding:18}}>
         <div className="tx-dm" style={{marginBottom:8}}>Chưa có Session nào đang chờ học.</div>
@@ -705,8 +731,9 @@ function ConceptEditorModal({concept,chapterId,onSave,onClose}){
   </div></div>;}
 
 /* ── Chapter block: header (progress) + expandable Concept list ── */
-function ChapterBlock({chapter,concepts,examDate,color,data,onAddConcept,onEditConcept,onDeleteConcept,onTouch,onEditChapter,onDeleteChapter}){
+function ChapterBlock({chapter,concepts,examDate,color,data,onAddConcept,onEditConcept,onDeleteConcept,onTouch,onEditChapter,onDeleteChapter,onBulkAddConcepts}){
   const [expanded,setExpanded]=useState(true);
+  const [showBulk,setShowBulk]=useState(false);
   const chConcepts=concepts.filter(c=>c.chapterId===chapter.id);
   const prog=chapterProgress(chapter,concepts,data);
   return<div className="card" style={{marginBottom:8,padding:'11px 14px'}}>
@@ -723,8 +750,13 @@ function ChapterBlock({chapter,concepts,examDate,color,data,onAddConcept,onEditC
       {chConcepts.length===0&&<div className="tx-dm" style={{padding:'8px 0'}}>Chưa có concept nào trong chapter này</div>}
       {chConcepts.map(c=><ConceptRow key={c.id} concept={c} color={color} examDate={examDate} data={data}
         onTouch={()=>onTouch(c)} onEdit={()=>onEditConcept(c)} onDelete={()=>onDeleteConcept(c.id)}/>)}
-      <button className="btn-g btn-sm" style={{marginTop:8}} onClick={()=>onAddConcept(chapter.id)}>+ Thêm Concept</button>
+      <div style={{display:'flex',gap:6,marginTop:8}}>
+        <button className="btn-g btn-sm" onClick={()=>onAddConcept(chapter.id)}>+ Thêm Concept</button>
+        <button className="btn-g btn-sm" onClick={()=>setShowBulk(true)}>📋 Dán nhanh nhiều Concept</button>
+      </div>
     </div>}
+    {showBulk&&<BulkAddConceptsModal chapterTitle={chapter.title}
+      onSave={(titles)=>{onBulkAddConcepts(chapter.id,titles);setShowBulk(false);}} onClose={()=>setShowBulk(false)}/>}
   </div>;}
 
 /* ── Chapter editor (lightweight — title + which Phase it belongs to) ── */
@@ -817,6 +849,10 @@ function CourseDetail({course,data,upd,awardXP,onBack,onUpdate,onDelete}){
   const examD=course.examDate?daysTo(course.examDate):null;
 
   const addConcept=(f)=>onUpdate({concepts:[...concepts,f]});
+  const addConceptsBulk=(chapterId,titles)=>{
+    const newConcepts=titles.map(title=>({id:uid(),chapterId,title,touches:[],objectiveIds:[],prerequisiteConceptIds:[],legacySubtasks:[],targetDate:''}));
+    onUpdate({concepts:[...concepts,...newConcepts]});
+  };
   const editConceptSave=(f)=>onUpdate({concepts:concepts.map(c=>c.id===f.id?f:c)});
   const delConcept=(id)=>onUpdate({concepts:concepts.filter(c=>c.id!==id)});
   const touchSave=(conceptId,understanding,confidence)=>{
@@ -835,6 +871,7 @@ function CourseDetail({course,data,upd,awardXP,onBack,onUpdate,onDelete}){
 
   return<div>
     <button className="btn-g btn-sm" style={{marginBottom:10}} onClick={onBack}>← Danh sách môn</button>
+    <NextActionBanner data={data} upd={upd} awardXP={awardXP} onlyCourseId={course.id}/>
     <div className="card" style={{marginBottom:10}}>
       <div className="flex-sb" style={{marginBottom:8}}>
         <div style={{display:'flex',gap:10,alignItems:'center'}}>
@@ -878,7 +915,8 @@ function CourseDetail({course,data,upd,awardXP,onBack,onUpdate,onDelete}){
       onDeleteConcept={delConcept}
       onTouch={setTouchConcept}
       onEditChapter={()=>setEditChapter(ch)}
-      onDeleteChapter={()=>delChapter(ch.id)}/>)}
+      onDeleteChapter={()=>delChapter(ch.id)}
+      onBulkAddConcepts={addConceptsBulk}/>)}
 
     <KnowledgeNotesBlock course={course} onUpdate={onUpdate}/>
 
