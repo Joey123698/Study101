@@ -251,8 +251,11 @@ function resumeSession(course,session,onUpdateCourse,upd,data){
 
 /* ── Finish Study: stop the clock, save reflection + per-concept touches,
    close out both the Session and its Journal Entry. Works whether currently
-   running or paused — total = accumulated + any live delta. ── */
-function finishSession(course,session,formData,onUpdateCourse,upd,data,awardXP){
+   running or paused — total = accumulated + any live delta.
+   v13: takes an optional onDone(masteryDeltas) callback — computes mastery
+   before/after per touched Concept so the caller (Next Queue) can show
+   immediate "+X% Mastery" feedback right after Finish. ── */
+function finishSession(course,session,formData,onUpdateCourse,upd,data,awardXP,onDone){
   const totalSeconds=(session.accumulatedSeconds||0)+(session.activeStartedAt?Math.floor((Date.now()-session.activeStartedAt)/1000):0);
   const durationMin=Math.round(totalSeconds/60);
   const journalEntries=data.journalEntries||[];
@@ -265,17 +268,25 @@ function finishSession(course,session,formData,onUpdateCourse,upd,data,awardXP){
   };
   upd({journalEntries:entry?journalEntries.map(j=>j.id===entry.id?updatedEntry:j):[updatedEntry,...journalEntries]});
 
-  // Push each rated concept touch into the Concept's history (drives mastery calc)
+  // Push each rated concept touch into the Concept's history (drives mastery calc),
+  // recording the before/after mastery for each so Next Queue can show real deltas.
+  const ms=getMasterySettings(data);
+  const masteryDeltas=[];
   const concepts=(course.concepts||[]).map(c=>{
     const t=formData.conceptTouches.find(ct=>ct.conceptId===c.id);
     if(!t)return c;
-    return{...c,touches:[...(c.touches||[]),{understanding:t.understanding,confidence:t.confidence,timestamp:Date.now(),sessionId:session.id}]};
+    const before=calcMastery(c.touches||[],ms);
+    const newTouches=[...(c.touches||[]),{understanding:t.understanding,confidence:t.confidence,timestamp:Date.now(),sessionId:session.id}];
+    const after=calcMastery(newTouches,ms);
+    masteryDeltas.push({conceptId:c.id,title:c.title,before,after});
+    return{...c,touches:newTouches};
   });
   onUpdateCourse({
     concepts,
     sessions:(course.sessions||[]).map(s=>s.id===session.id?{...s,status:'completed',activeStartedAt:null,accumulatedSeconds:0,activeJournalEntryId:null}:s),
   });
   if(awardXP)awardXP(XPR.session_complete+Math.round(durationMin/10),`✅ Hoàn thành: ${session.title}`);
+  if(onDone)onDone(masteryDeltas);
 }
 
 function markReviewed(course,session,onUpdateCourse){
@@ -511,7 +522,7 @@ function EditJournalEntryModal({entry,concepts,onSave,onClose}){
 
 /* ── Current Session card — the primary "start studying" entry point, per spec.
    Shows live timer if in_progress, checklist ticking, Kết thúc button. ── */
-function CurrentSessionCard({course,session,journalEntries,onUpdateCourse,upd,data,awardXP,onEdit,onDelete}){
+function CurrentSessionCard({course,session,journalEntries,onUpdateCourse,upd,data,awardXP,onEdit,onDelete,onFinished}){
   const [showFinish,setShowFinish]=useState(false);
   const elapsed=useSessionTimer(session);
   const entry=(journalEntries||[]).find(j=>j.id===session.activeJournalEntryId);
@@ -579,7 +590,7 @@ function CurrentSessionCard({course,session,journalEntries,onUpdateCourse,upd,da
     {session.status==='completed'&&<button className="btn-g btn-sm" onClick={()=>markReviewed(course,session,onUpdateCourse)}>🔍 Đánh dấu đã Review</button>}
 
     {showFinish&&<FinishSessionModal session={session} concepts={course.concepts||[]} currentChecklist={entry?.checklist||[]}
-      onSave={formData=>{finishSession(course,session,formData,onUpdateCourse,upd,data,awardXP);setShowFinish(false);}}
+      onSave={formData=>{finishSession(course,session,formData,onUpdateCourse,upd,data,awardXP,onFinished);setShowFinish(false);}}
       onClose={()=>setShowFinish(false)}/>}
   </div>;}
 
@@ -589,9 +600,18 @@ function CurrentSessionCard({course,session,journalEntries,onUpdateCourse,upd,da
 function SessionLibraryBlock({course,data,upd,awardXP,onUpdate}){
   const [showEditor,setShowEditor]=useState(false);
   const [editSession,setEditSession]=useState(null);
+  const [showQuick,setShowQuick]=useState(false);
+  const [quickTitle,setQuickTitle]=useState('');
+  const [nextQueue,setNextQueue]=useState(null); // {deltas, simulatedData} — set right after Finish
   const sessions=course.sessions||[];
   const legacy=course.legacyLearningObjectives||[];
-  const inProgress=sessions.find(s=>s.status==='in_progress');
+  // Prefer the session that's ACTUALLY running (activeStartedAt set) over one
+  // that's merely status='in_progress' but paused — both can coexist in the
+  // same course right after the parallel-session guard pauses an old one
+  // in place (its status stays 'in_progress', only activeStartedAt clears).
+  // Falling back to plain .find() would show whichever comes first in array
+  // order, which is not necessarily the one truly running.
+  const inProgress=sessions.find(s=>s.status==='in_progress'&&s.activeStartedAt)||sessions.find(s=>s.status==='in_progress');
   const planned=sessions.filter(s=>s.status==='planned').sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));
   const current=inProgress||planned[0]||null;
   const others=sessions.filter(s=>s.id!==current?.id);
@@ -606,15 +626,48 @@ function SessionLibraryBlock({course,data,upd,awardXP,onUpdate}){
     onUpdate({sessions:sessions.filter(s=>s.id!==id)});
     upd({journalEntries:(data.journalEntries||[]).filter(j=>j.sessionId!==id)});
   };
+  const startQuick=()=>{
+    if(!quickTitle.trim())return;
+    quickStartFreeformSession(data,upd,course,quickTitle.trim());
+    setQuickTitle('');setShowQuick(false);
+  };
+  // Called by CurrentSessionCard right after Finish. `data` here is still the
+  // PRE-finish snapshot (React state hasn't propagated yet), so we simulate
+  // the post-finish state ourselves — otherwise computeNextAction would still
+  // see the just-finished Session as in_progress and wrongly re-suggest it.
+  const handleFinished=(finishedSessionId,deltas)=>{
+    const simulatedData={...data,courses:data.courses.map(c=>c.id!==course.id?c:{...c,sessions:(c.sessions||[]).map(s=>s.id===finishedSessionId?{...s,status:'completed'}:s)})};
+    setNextQueue({deltas,simulatedData});
+  };
 
   return<div style={{marginBottom:10}}>
     <div className="flex-sb" style={{marginBottom:8}}>
       <div className="lbl" style={{margin:0}}>🎯 CURRENT SESSION</div>
-      <button className="btn-g btn-sm" onClick={()=>setShowEditor(true)}>+ Session mới</button>
+      <div style={{display:'flex',gap:6}}>
+        <button className="btn-g btn-sm" onClick={()=>setShowQuick(s=>!s)}>⚡ Quick Session</button>
+        <button className="btn-g btn-sm" onClick={()=>setShowEditor(true)}>+ Session mới</button>
+      </div>
     </div>
 
+    {showQuick&&<div className="card" style={{marginBottom:10,display:'flex',gap:6}}>
+      <input className="inp" autoFocus value={quickTitle} onChange={e=>setQuickTitle(e.target.value)} placeholder="Tên nhanh, vd: Ôn lại bài cũ..." style={{flex:1}} onKeyDown={e=>e.key==='Enter'&&startQuick()}/>
+      <button className="btn-p btn-sm" onClick={startQuick}>▶ Start</button>
+    </div>}
+
+    {nextQueue&&<div className="card" style={{marginBottom:10,border:'1.5px solid var(--suBdr)',background:'var(--sub)'}}>
+      <div style={{textAlign:'center',marginBottom:nextQueue.deltas.length>0?8:0}}>
+        <div style={{fontSize:20,marginBottom:2}}>🎉</div>
+        <div style={{fontSize:13,fontWeight:700}}>Xong! Làm tốt lắm.</div>
+      </div>
+      {nextQueue.deltas.map(d=><div key={d.conceptId} style={{fontSize:11,color:'var(--su)',textAlign:'center'}}>📈 {d.title}: {d.before}% → {d.after}%</div>)}
+      <div style={{marginTop:10,paddingTop:10,borderTop:'1px solid var(--bdr)'}}>
+        <NextActionBanner data={nextQueue.simulatedData} upd={upd} awardXP={awardXP}/>
+      </div>
+      <button className="btn-g btn-sm" style={{width:'100%',justifyContent:'center'}} onClick={()=>setNextQueue(null)}>Đóng</button>
+    </div>}
+
     {current?<CurrentSessionCard key={current.id} course={course} session={current} journalEntries={data.journalEntries} onUpdateCourse={onUpdate} upd={upd} data={data} awardXP={awardXP}
-        onEdit={()=>setEditSession(current)} onDelete={()=>delSession(current.id)}/>
+        onEdit={()=>setEditSession(current)} onDelete={()=>delSession(current.id)} onFinished={(deltas)=>handleFinished(current.id,deltas)}/>
       :<div className="card" style={{marginBottom:10,textAlign:'center',padding:18}}>
         <div className="tx-dm" style={{marginBottom:8}}>Chưa có Session nào đang chờ học.</div>
         <button className="btn-p btn-sm" onClick={()=>setShowEditor(true)}>+ Tạo Session đầu tiên</button>
@@ -666,7 +719,7 @@ function ConceptTouchModal({concept,color,onSave,onClose}){
   </div></div>;}
 
 /* ── Concept row: mastery bar + status + review priority + touch + history sparkline ── */
-function ConceptRow({concept,color,examDate,data,onTouch,onEdit,onDelete}){
+function ConceptRow({concept,color,examDate,data,course,upd,onTouch,onEdit,onDelete}){
   const [showHistory,setShowHistory]=useState(false);
   const touches=concept.touches||[];
   const mastery=calcMastery(touches,data);
@@ -694,6 +747,7 @@ function ConceptRow({concept,color,examDate,data,onTouch,onEdit,onDelete}){
         </div>
       </div>
       <button onClick={onTouch} title="Ghi nhanh đánh giá" style={{background:'var(--acc2)',border:'1px solid var(--acc3)',borderRadius:7,cursor:'pointer',fontSize:11,padding:'4px 8px',color:'var(--acc)',fontWeight:600,flexShrink:0}}>⚡ Ghi nhanh</button>
+      {course&&upd&&<button onClick={()=>quickStartSession(data,upd,course,concept)} title="Tạo Session nhanh cho Concept này và bắt đầu ngay" style={{background:'var(--sub)',border:'1px solid var(--suBdr)',borderRadius:7,cursor:'pointer',fontSize:11,padding:'4px 8px',color:'var(--su)',fontWeight:600,flexShrink:0}}>▶ Bắt đầu ngay</button>}
       <button onClick={onEdit} style={{background:'none',border:'none',cursor:'pointer',color:'var(--dm)',fontSize:11,opacity:.5}}>✏️</button>
       <button onClick={onDelete} style={{background:'none',border:'none',cursor:'pointer',color:'var(--dm)',fontSize:13,opacity:.35}}>×</button>
     </div>
@@ -731,7 +785,7 @@ function ConceptEditorModal({concept,chapterId,onSave,onClose}){
   </div></div>;}
 
 /* ── Chapter block: header (progress) + expandable Concept list ── */
-function ChapterBlock({chapter,concepts,examDate,color,data,onAddConcept,onEditConcept,onDeleteConcept,onTouch,onEditChapter,onDeleteChapter,onBulkAddConcepts}){
+function ChapterBlock({chapter,concepts,examDate,color,data,course,upd,onAddConcept,onEditConcept,onDeleteConcept,onTouch,onEditChapter,onDeleteChapter,onBulkAddConcepts}){
   const [expanded,setExpanded]=useState(true);
   const [showBulk,setShowBulk]=useState(false);
   const chConcepts=concepts.filter(c=>c.chapterId===chapter.id);
@@ -748,7 +802,7 @@ function ChapterBlock({chapter,concepts,examDate,color,data,onAddConcept,onEditC
     </div>
     {expanded&&<div style={{marginTop:8,paddingLeft:19}}>
       {chConcepts.length===0&&<div className="tx-dm" style={{padding:'8px 0'}}>Chưa có concept nào trong chapter này</div>}
-      {chConcepts.map(c=><ConceptRow key={c.id} concept={c} color={color} examDate={examDate} data={data}
+      {chConcepts.map(c=><ConceptRow key={c.id} concept={c} color={color} examDate={examDate} data={data} course={course} upd={upd}
         onTouch={()=>onTouch(c)} onEdit={()=>onEditConcept(c)} onDelete={()=>onDeleteConcept(c.id)}/>)}
       <div style={{display:'flex',gap:6,marginTop:8}}>
         <button className="btn-g btn-sm" onClick={()=>onAddConcept(chapter.id)}>+ Thêm Concept</button>
@@ -909,7 +963,7 @@ function CourseDetail({course,data,upd,awardXP,onBack,onUpdate,onDelete}){
       <button className="btn-p btn-sm" onClick={()=>setShowAddChapter(true)}>+ Chapter</button>
     </div>
     {chapters.length===0&&<div className="card"><div className="tx-dm" style={{textAlign:'center',padding:14}}>Chưa có Chapter nào. Thêm Phase trước (nếu cần), rồi thêm Chapter.</div></div>}
-    {chapters.map(ch=><ChapterBlock key={ch.id} chapter={ch} concepts={concepts} examDate={course.examDate} color={course.color} data={data}
+    {chapters.map(ch=><ChapterBlock key={ch.id} chapter={ch} concepts={concepts} examDate={course.examDate} color={course.color} data={data} course={course} upd={upd}
       onAddConcept={(chapterId)=>setEditConcept({chapterId})}
       onEditConcept={(c)=>setEditConcept({concept:c,chapterId:c.chapterId})}
       onDeleteConcept={delConcept}

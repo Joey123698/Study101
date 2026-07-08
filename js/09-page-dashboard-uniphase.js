@@ -228,6 +228,19 @@ function DashboardPage({data,upd,nav,awardXP}){
     {overdueDeadlines.length>0&&<div style={{background:'var(--wab)',border:'1px solid var(--waBdr)',borderRadius:10,padding:'9px 13px',marginBottom:10,fontSize:11,color:'var(--wa)'}}>
       ⚠️ {overdueDeadlines.length} deadline đã quá hạn — xem bên dưới
     </div>}
+    {(upcomingDeadlines.length>0||overdueDeadlines.length>0)&&<div className="card" style={{marginBottom:10}}>
+      <div className="flex-sb" style={{marginBottom:8}}><div className="lbl" style={{margin:0}}>⏰ DEADLINES (từ tất cả môn học)</div><button className="btn-g btn-sm" onClick={()=>nav('courses')}>Xem môn học →</button></div>
+      {overdueDeadlines.slice(0,3).map((d,i)=><div key={'o'+i} className="deadline-row">
+        <span style={{fontSize:14}}>{d.courseEmoji}</span>
+        <div style={{flex:1,minWidth:0}}><div style={{fontSize:12,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{d.label}</div><div className="tx-dm">{d.courseName}</div></div>
+        <span style={{fontSize:10,color:'var(--cr)',fontWeight:700,whiteSpace:'nowrap'}}>Quá hạn!</span>
+      </div>)}
+      {upcomingDeadlines.map((d,i)=>{const days=daysTo(d.date);return<div key={'u'+i} className="deadline-row">
+        <span style={{fontSize:14}}>{d.courseEmoji}</span>
+        <div style={{flex:1,minWidth:0}}><div style={{fontSize:12,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{d.label}</div><div className="tx-dm">{d.courseName} · {fmt(d.date)}{d.time?` ${d.time}`:''}</div></div>
+        <span style={{fontSize:10,color:days<=2?'var(--cr)':days<=5?'var(--wa)':'var(--mu)',fontWeight:700,whiteSpace:'nowrap'}}>{days}N</span>
+      </div>;})}
+    </div>}
     <div className="g2" style={{marginBottom:10}}>
       <div className="card" style={{borderColor:stale?'var(--waBdr)':'rgba(124,110,245,.3)'}}>
         {/* Header: label + date nav + edit */}
@@ -303,21 +316,6 @@ function DashboardPage({data,upd,nav,awardXP}){
         </div>;})}
         <button className="btn-g btn-sm" style={{marginTop:8,width:'100%',justifyContent:'center'}} onClick={()=>setShowAddAdmin(true)}>+ Thêm task {adminDate===TODAY?'hôm nay':fmt(adminDate)}</button>
       </div>
-    </div>
-    <div style={{marginBottom:10}}>
-    {(upcomingDeadlines.length>0||overdueDeadlines.length>0)&&<div className="card" style={{marginBottom:10}}>
-      <div className="flex-sb" style={{marginBottom:8}}><div className="lbl" style={{margin:0}}>⏰ DEADLINES (từ tất cả môn học)</div><button className="btn-g btn-sm" onClick={()=>nav('courses')}>Xem môn học →</button></div>
-      {overdueDeadlines.slice(0,3).map((d,i)=><div key={'o'+i} className="deadline-row">
-        <span style={{fontSize:14}}>{d.courseEmoji}</span>
-        <div style={{flex:1,minWidth:0}}><div style={{fontSize:12,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{d.label}</div><div className="tx-dm">{d.courseName}</div></div>
-        <span style={{fontSize:10,color:'var(--cr)',fontWeight:700,whiteSpace:'nowrap'}}>Quá hạn!</span>
-      </div>)}
-      {upcomingDeadlines.map((d,i)=>{const days=daysTo(d.date);return<div key={'u'+i} className="deadline-row">
-        <span style={{fontSize:14}}>{d.courseEmoji}</span>
-        <div style={{flex:1,minWidth:0}}><div style={{fontSize:12,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{d.label}</div><div className="tx-dm">{d.courseName} · {fmt(d.date)}{d.time?` ${d.time}`:''}</div></div>
-        <span style={{fontSize:10,color:days<=2?'var(--cr)':days<=5?'var(--wa)':'var(--mu)',fontWeight:700,whiteSpace:'nowrap'}}>{days}N</span>
-      </div>;})}
-    </div>}
     </div>
     <div className="card" style={{marginBottom:10}}>
       <div className="flex-sb" style={{marginBottom:7}}><div className="lbl" style={{margin:0}}>✅ HABITS HÔM NAY</div>

@@ -2,18 +2,19 @@
    11-app-shell.js — PAGES nav config + App root component
    ══════════════════════════════════════════════════════════════ */
 const PAGES=[
-  {id:'dashboard',label:'Dashboard',emoji:'🏠',sec:'TỔNG QUAN'},
-  {id:'uniphase',label:'Uni Phase',emoji:'🗺️',sec:'TỔNG QUAN'},
-  {id:'timeline',label:'Timeline',emoji:'📅',sec:'TỔNG QUAN'},
-  {id:'timer',label:'Timer / Pomodoro',emoji:'⏱️',sec:'HỌC TẬP'},
-  {id:'journal',label:'Nhật ký học',emoji:'📓',sec:'HỌC TẬP'},
-  {id:'courses',label:'Môn học',emoji:'📚',sec:'HỌC TẬP'},
-  {id:'language',label:'Ngôn ngữ',emoji:'🌐',sec:'HỌC TẬP'},
-  {id:'studylog',label:'Study Log',emoji:'📊',sec:'HỌC TẬP'},
-  {id:'habits',label:'Habits',emoji:'✅',sec:'LIFESTYLE'},
-  {id:'events',label:'Events',emoji:'🗓️',sec:'LIFESTYLE'},
-  {id:'admin',label:'Admin Tasks',emoji:'🧹',sec:'LIFESTYLE'},
-  {id:'parking',label:'Parking Lot',emoji:'🅿️',sec:'LIFESTYLE'},
+  {id:'mission',label:'Mission',emoji:'🎯',sec:'THỰC THI'},
+  {id:'journal',label:'Nhật ký học',emoji:'📓',sec:'THỰC THI'},
+  {id:'timer',label:'Timer / Pomodoro',emoji:'⏱️',sec:'THỰC THI'},
+  {id:'parking',label:'Parking Lot',emoji:'🅿️',sec:'THỰC THI'},
+  {id:'courses',label:'Môn học',emoji:'📚',sec:'HỌC'},
+  {id:'language',label:'Ngôn ngữ',emoji:'🌐',sec:'HỌC'},
+  {id:'dashboard',label:'Dashboard',emoji:'🏠',sec:'REVIEW'},
+  {id:'studylog',label:'Study Log',emoji:'📊',sec:'REVIEW'},
+  {id:'habits',label:'Habits',emoji:'✅',sec:'REVIEW'},
+  {id:'uniphase',label:'Uni Phase',emoji:'🗺️',sec:'KẾ HOẠCH'},
+  {id:'timeline',label:'Timeline',emoji:'📅',sec:'KẾ HOẠCH'},
+  {id:'events',label:'Events',emoji:'🗓️',sec:'KẾ HOẠCH'},
+  {id:'admin',label:'Admin Tasks',emoji:'🧹',sec:'KẾ HOẠCH'},
   {id:'settings',label:'Cài đặt',emoji:'⚙️',sec:'HỆ THỐNG'},
 ];
 
@@ -23,7 +24,7 @@ function App(){
   const [fbInitFailed,setFbInitFailed]=useState(false);
   const [showWelcome,setShowWelcome]=useState(true);
   const [syncing,setSyncing]=useState(false);const [syncErr,setSyncErr]=useState(false);const [lastSync,setLastSync]=useState(null);
-  const [page,setPage]=useState('dashboard');const [pageParams,setPageParams]=useState({});
+  const [page,setPage]=useState('mission');const [pageParams,setPageParams]=useState({});
   const [sbOpen,setSbOpen]=useState(true);
   const [expandedNav,setExpandedNav]=useState({});
   const saveTimer=useRef(null);const saving=useRef(false);const unsubRef=useRef(null);
@@ -73,6 +74,7 @@ function App(){
   const activeCourses=data.courses.filter(c=>!c.archived);
 
   function renderPage(){
+    if(page==='mission')return<MissionScreen data={data} upd={upd} awardXP={awardXP} nav={nav}/>;
     if(page==='dashboard')return<DashboardPage data={data} upd={upd} nav={nav} awardXP={awardXP}/>;
     if(page==='uniphase')return<UniPhasePage data={data} upd={upd}/>;
     if(page==='timeline')return<TimelinePage data={data}/>;

@@ -812,8 +812,13 @@ function StudyJournalPage({data,upd,awardXP}){
 
   // If ANY course has an in-progress session, surface it first regardless of picker
   // (so finishing a session you started elsewhere is always one click away here).
+  // Prefer the truly-running one (activeStartedAt set) over one merely
+  // status='in_progress' but paused — see the same fix in 08/12.
   let globalInProgress=null;
-  for(const c of courses){const s=(c.sessions||[]).find(x=>x.status==='in_progress');if(s){globalInProgress={course:c,session:s};break;}}
+  for(const c of courses){
+    const s=(c.sessions||[]).find(x=>x.status==='in_progress'&&x.activeStartedAt)||(c.sessions||[]).find(x=>x.status==='in_progress');
+    if(s){globalInProgress={course:c,session:s};break;}
+  }
 
   const pickedCourse=courses.find(c=>c.id===pickedCourseId);
   const updCourse=(courseId,ch)=>upd({courses:data.courses.map(c=>c.id===courseId?{...c,...ch}:c)});
@@ -830,7 +835,7 @@ function StudyJournalPage({data,upd,awardXP}){
 
   const pickedSessions=pickedCourse?.sessions||[];
   const pickedPlanned=pickedSessions.filter(s=>s.status==='planned').sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));
-  const pickedCurrent=pickedSessions.find(s=>s.status==='in_progress')||pickedPlanned[0]||null;
+  const pickedCurrent=pickedSessions.find(s=>s.status==='in_progress'&&s.activeStartedAt)||pickedSessions.find(s=>s.status==='in_progress')||pickedPlanned[0]||null;
 
   // History grouped by course, most recent first
   const grouped={};journalEntries.filter(j=>j.status==='completed').forEach(j=>{if(!grouped[j.courseId])grouped[j.courseId]=[];grouped[j.courseId].push(j);});

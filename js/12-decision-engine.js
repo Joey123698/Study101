@@ -63,7 +63,10 @@ function computeNextAction(data){
   // Rule 1 — Resume: an in_progress Session already exists (only one can,
   // enforced by pauseAllOtherRunningSessions above).
   for(const course of courses){
-    const session=(course.sessions||[]).find(s=>s.status==='in_progress');
+    // Same preference as SessionLibraryBlock's `current`: a truly-running
+    // session (activeStartedAt set) beats one that's merely status='in_progress'
+    // but paused, when both coexist in the same course.
+    const session=(course.sessions||[]).find(s=>s.status==='in_progress'&&s.activeStartedAt)||(course.sessions||[]).find(s=>s.status==='in_progress');
     if(session){
       const paused=!session.activeStartedAt;
       return{kind:'resume',course,session,
@@ -191,6 +194,82 @@ function NextActionBanner({data,upd,awardXP,nav,onlyCourseId}){
 
   return null;
 }
+
+/* ── Quick Session (course-level, no Concept picked): "Tên. Start. Hết."
+   For when you just want to log a study block without picking Concepts up
+   front — the freeform counterpart to quickStartSession's Concept-scoped
+   version above. ── */
+function quickStartFreeformSession(data,upd,course,title){
+  const now=Date.now();
+  const sessionId=uid();
+  const journalEntryId=uid();
+  const newSession={id:sessionId,title,estimatedDuration:30,objectives:[],conceptIds:[],resources:[],customTodos:[],currentPosition:'',status:'in_progress',activeStartedAt:now,accumulatedSeconds:0,activeJournalEntryId:journalEntryId,createdAt:now};
+  const entry={id:journalEntryId,date:TODAY,courseId:course.id,sessionId,duration:0,reflection:'',questionsRaised:'',actionItems:[],confidenceAfter:0,difficulty:0,notes:'',conceptTouches:[],checklist:[],status:'in_progress'};
+  const paused=pauseAllOtherRunningSessions(data.courses||[],course.id,sessionId,now);
+  const courses=paused.map(c=>c.id!==course.id?c:{...c,sessions:[...(c.sessions||[]),newSession]});
+  upd({courses,journalEntries:[entry,...(data.journalEntries||[])]});
+}
+
+/* ── How many days since the last COMPLETED Session, anywhere. Powers the
+   Mission screen's "Recovery tone" — coming back after a gap should feel
+   welcoming, not accusatory (no "5 days overdue" language). ── */
+function daysSinceLastActivity(data){
+  const completed=(data.journalEntries||[]).filter(j=>j.status==='completed');
+  if(completed.length===0)return null;
+  const lastDate=completed.reduce((max,j)=>j.date>max?j.date:max,completed[0].date);
+  return Math.floor((new Date(TODAY)-new Date(lastDate))/86400000);
+}
+
+/* ── Mission screen — the new default landing page (replaces Dashboard in
+   that role; Dashboard becomes "review", Mission becomes "do"). Shows the
+   same Decision Engine banner front and center, plus a single "Mission hôm
+   nay" (reuses data.dailyFocus[TODAY].mustDo — no new data model, just a
+   simpler view of an existing field), plus a Recovery-toned greeting when
+   returning after ≥5 days away. ── */
+function MissionScreen({data,upd,awardXP,nav}){
+  const daysSince=daysSinceLastActivity(data);
+  const isReturning=daysSince!==null&&daysSince>=5;
+  const hour=new Date().getHours();
+  const greeting=hour<12?'Chào buổi sáng ☀️':hour<18?'Chào buổi chiều 👋':'Chào buổi tối 🌙';
+  const fd=getDayFocus(data,TODAY);
+  const [editing,setEditing]=useState(false);
+  const [missionText,setMissionText]=useState('');
+  const openEdit=()=>{setMissionText(fd.mustDo?.text||'');setEditing(true);};
+  const saveMission=()=>{
+    const nfd={...fd,mustDo:{text:missionText.trim(),done:fd.mustDo?.done||false}};
+    upd({dailyFocus:{...(data.dailyFocus||{}),[TODAY]:nfd}});
+    setEditing(false);
+  };
+  const togMission=()=>{
+    const nfd={...fd,mustDo:{...(fd.mustDo||{text:''}),done:!fd.mustDo?.done}};
+    upd({dailyFocus:{...(data.dailyFocus||{}),[TODAY]:nfd}});
+  };
+  return<div>
+    <div style={{textAlign:'center',marginBottom:14}}>
+      <div style={{fontSize:14,color:'var(--mu)'}}>{isReturning?'Chào mừng trở lại 👋':greeting}</div>
+      {isReturning&&<div style={{fontSize:11,color:'var(--mu)',marginTop:3}}>Đã {daysSince} ngày chưa học — không sao cả, hôm nay chỉ cần bắt đầu lại 1 buổi thôi.</div>}
+    </div>
+    <NextActionBanner data={data} upd={upd} awardXP={awardXP} nav={nav}/>
+    <div className="card" style={{marginBottom:10}}>
+      <div className="flex-sb" style={{marginBottom:8}}>
+        <div className="lbl" style={{margin:0}}>🎯 MISSION HÔM NAY</div>
+        {!editing&&<button className="btn-g btn-sm" onClick={openEdit}>✏️</button>}
+      </div>
+      {editing?<div style={{display:'flex',gap:6}}>
+        <input className="inp" autoFocus value={missionText} onChange={e=>setMissionText(e.target.value)} placeholder="Việc quan trọng nhất hôm nay..." style={{flex:1}} onKeyDown={e=>e.key==='Enter'&&saveMission()}/>
+        <button className="btn-p btn-sm" onClick={saveMission}>Lưu</button>
+      </div>
+      :fd.mustDo?.text
+        ?<div style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer'}} onClick={togMission}>
+          <Tick done={fd.mustDo.done} color="var(--acc)" onClick={togMission}/>
+          <span style={{fontSize:14,fontWeight:600,textDecoration:fd.mustDo.done?'line-through':'none',opacity:fd.mustDo.done?.55:1}}>{fd.mustDo.text}</span>
+        </div>
+        :<div style={{textAlign:'center',cursor:'pointer',padding:'6px 0'}} onClick={openEdit}><span className="tx-dm">+ Đặt 1 việc quan trọng nhất hôm nay</span></div>}
+    </div>
+    <div style={{textAlign:'center'}}>
+      <button className="btn-g btn-sm" onClick={()=>nav('dashboard')}>Xem Dashboard đầy đủ →</button>
+    </div>
+  </div>;}
 
 /* ── Bulk-paste Concept creation — for courses ở giai đoạn ôn thi / mờ tịt
    cần dựng cả khung concept một lúc. Bạn vẫn tự lên ChatGPT xin roadmap
