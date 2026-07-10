@@ -53,6 +53,31 @@ function calcMastery(touches,masterySettingsOrData){
   return Math.round(Math.max(0,Math.min(100,m)));
 }
 
+/**
+ * v13: Progress for a Concept — branches by Concept "mode", inferred from the
+ * optional `targetTouches` field (undefined for every existing Concept, so
+ * this is 100% backward-compatible: nothing changes for Micro/Macro unless
+ * you explicitly set it).
+ *
+ * - Knowledge Concept (targetTouches unset, the default — e.g. Micro/Macro):
+ *   unchanged EMA calcMastery. Repetition converges toward true understanding.
+ * - Task Concept (targetTouches set, e.g. IPE "Thuyết trình" needing 3
+ *   Sessions): progress = touches.length / targetTouches. Finishing 1 of 3
+ *   required Sessions with full confidence no longer wrongly shows ~100% —
+ *   "how confident I felt" and "how much of the task is done" are different
+ *   numbers, and conflating them was the actual bug being fixed here.
+ *
+ * Always returns 0-100, same contract as calcMastery, so every existing
+ * caller (Review Priority, chapter/phase/course progress rollups, the
+ * Decision Engine) keeps working without any other change.
+ */
+function calcProgress(concept,masterySettingsOrData){
+  const touches=concept.touches||[];
+  if(concept.targetTouches>0)return Math.round(Math.min(100,(touches.length/concept.targetTouches)*100));
+  const ms=masterySettingsOrData?.emaAlpha!==undefined?masterySettingsOrData:getMasterySettings(masterySettingsOrData);
+  return calcMastery(touches,ms);
+}
+
 /** Latest self-rated confidence (1-5) — NOT smoothed, always the most recent touch's value. */
 function latestConfidence(touches){
   if(!touches||touches.length===0)return 0;
@@ -84,7 +109,7 @@ const STATUS_META={
 function deriveConceptStatus(concept,examDate,data){
   const touches=concept.touches||[];
   if(touches.length===0)return 'Not Started';
-  const mastery=calcMastery(touches,getMasterySettings(data));
+  const mastery=calcProgress(concept,data);
   if(mastery<40)return 'Learning';
   if(mastery<65)return 'Familiar';
   if(mastery<=85)return 'Comfortable';
@@ -106,7 +131,7 @@ function computeReviewPriority(concept,examDate,data){
   const touches=concept.touches||[];
   if(touches.length===0)return 'None'; // nothing to "review" yet — it's Not Started, a different concern
   const ms=getMasterySettings(data);
-  const mastery=calcMastery(touches,ms);
+  const mastery=calcProgress(concept,data);
   const stale=daysSinceLastTouch(touches);
   const conf=latestConfidence(touches);
 
@@ -131,8 +156,7 @@ function computeReviewPriority(concept,examDate,data){
 function chapterProgress(chapter,allConcepts,data){
   const cs=allConcepts.filter(c=>c.chapterId===chapter.id);
   if(cs.length===0)return 0;
-  const ms=getMasterySettings(data);
-  return Math.round(cs.reduce((s,c)=>s+calcMastery(c.touches||[],ms),0)/cs.length);
+  return Math.round(cs.reduce((s,c)=>s+calcProgress(c,data),0)/cs.length);
 }
 
 /** Phase (course-level) progress = average of its Chapters' progress. */

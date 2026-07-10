@@ -121,6 +121,11 @@ function CourseAttendance({course,onUpdate}){
 
 /* ── Phase Gantt — now renders REAL course.coursePhases (structural unit), not a decorative list.
    Width shows date range, fill % shows computed mastery progress within that Phase. ── */
+/* ── v13: color-codes each Phase by where TODAY falls relative to it (past =
+   muted gray, current = blue glow, upcoming = amber) instead of one flat
+   color for everything — plus a date ruler (start/today/end, with weekday)
+   and a "today" line running through every bar, so the timeline actually
+   reads as a timeline instead of a list of same-colored bars. ── */
 function CoursePhaseGantt({course,onUpdate,data}){
   const [showAdd,setShowAdd]=useState(false);
   const [editId,setEditId]=useState(null);
@@ -129,9 +134,26 @@ function CoursePhaseGantt({course,onUpdate,data}){
   const start=coursePhases.length?new Date(Math.min(...coursePhases.map(p=>new Date(p.startDate||p.endDate||TODAY)))):new Date();
   start.setHours(0,0,0,0);
   const end=new Date(course.examDate||course.endDate||coursePhases[coursePhases.length-1]?.endDate||'2026-07-31');
+  end.setHours(0,0,0,0);
   const totalMs=Math.max(1,end-start);
+  const now=new Date();now.setHours(0,0,0,0);
+  const todayInRange=now>=start&&now<=end;
+  const todayPct=Math.max(0,Math.min(100,(now-start)/totalMs*100));
   const pOf=(ds)=>{if(!ds)return 0;const d=new Date(ds);d.setHours(0,0,0,0);return Math.max(0,Math.min(100,(d-start)/totalMs*100));};
   const wOf=(s,e)=>Math.max(2,pOf(e)-pOf(s||e));
+  const dayCount=(p)=>{const ps=new Date(p.startDate||TODAY);const pe=new Date(p.endDate||p.startDate||TODAY);return Math.max(1,Math.round((pe-ps)/86400000)+1);};
+  const phaseTiming=(p)=>{
+    const ps=new Date(p.startDate||TODAY);ps.setHours(0,0,0,0);
+    const pe=new Date(p.endDate||p.startDate||TODAY);pe.setHours(0,0,0,0);
+    if(now>pe)return'past';
+    if(now>=ps&&now<=pe)return'current';
+    return'upcoming';
+  };
+  const TIMING_STYLE={
+    past:{bar:'var(--dm)',text:'var(--mu)',glow:'none',opacity:.55},
+    current:{bar:'var(--in)',text:'var(--in)',glow:'0 0 0 3px var(--inb)',opacity:1},
+    upcoming:{bar:'var(--wa)',text:'var(--wa)',glow:'none',opacity:.85},
+  };
   const save=()=>{
     if(!f.title.trim())return;
     if(editId){onUpdate({coursePhases:coursePhases.map(p=>p.id===editId?{...p,...f}:p)});}
@@ -158,18 +180,37 @@ function CoursePhaseGantt({course,onUpdate,data}){
       <div style={{display:'flex',gap:6}}><button className="btn-p btn-sm" onClick={save}>{editId?'Lưu':'Thêm'}</button><button className="btn-g btn-sm" onClick={()=>{setShowAdd(false);setEditId(null);}}>Huỷ</button></div>
     </div>}
     {coursePhases.length===0&&!showAdd&&<div className="tx-dm" style={{textAlign:'center',padding:'10px'}}>Chưa có Phase nào — bấm "+ Thêm Phase" để tạo</div>}
-    {coursePhases.map(p=>{
-      const prog=phaseProgress(p,course.chapters||[],course.concepts||[],data);
-      return<div key={p.id} className="gantt2-row">
-        <div className="gantt2-label" onClick={()=>{setEditId(p.id);setF({title:p.title,startDate:p.startDate||TODAY,endDate:p.endDate||TODAY});setShowAdd(true);}} style={{cursor:'pointer'}} title="Click để sửa">{p.title}</div>
-        <div className="gantt2-track">
-          <div className="gantt2-bar" style={{left:`${pOf(p.startDate)}%`,width:`${wOf(p.startDate,p.endDate)}%`,background:course.color,position:'relative',overflow:'hidden'}} title={`${fmt(p.startDate)} → ${fmt(p.endDate)} · ${prog}% mastery`}>
-            <div style={{position:'absolute',inset:0,background:'rgba(0,0,0,.35)',width:`${100-prog}%`,right:0,left:'auto'}}/>
-            <span style={{position:'relative'}}>{p.title} · {prog}%</span>
+    {coursePhases.length>0&&<div style={{display:'flex',justifyContent:'space-between',marginBottom:6,paddingLeft:'var(--gantt-label-w, 0)'}}>
+      <span style={{fontSize:9,color:'var(--dm)'}}>{fmtL(start)}</span>
+      <span style={{fontSize:9,color:'var(--dm)'}}>{fmtL(end)}</span>
+    </div>}
+    <div style={{position:'relative'}}>
+      {coursePhases.map(p=>{
+        const prog=phaseProgress(p,course.chapters||[],course.concepts||[],data);
+        const timing=phaseTiming(p);
+        const ts=TIMING_STYLE[timing];
+        return<div key={p.id} className="gantt2-row">
+          <div className="gantt2-label" onClick={()=>{setEditId(p.id);setF({title:p.title,startDate:p.startDate||TODAY,endDate:p.endDate||TODAY});setShowAdd(true);}} style={{cursor:'pointer',color:ts.text,opacity:timing==='past'?.7:1}} title="Click để sửa">{p.title}</div>
+          <div className="gantt2-track" style={{position:'relative'}}>
+            <div className="gantt2-bar" style={{left:`${pOf(p.startDate)}%`,width:`${wOf(p.startDate,p.endDate)}%`,background:ts.bar,opacity:ts.opacity,boxShadow:ts.glow,position:'relative',overflow:'hidden',transition:'box-shadow .2s'}} title={`${fmt(p.startDate)} → ${fmt(p.endDate)} · ${dayCount(p)} ngày · ${prog}% mastery${timing==='current'?' · ĐANG Ở PHASE NÀY':timing==='past'?' · Đã qua':' · Sắp tới'}`}>
+              <div style={{position:'absolute',inset:0,background:'rgba(0,0,0,.35)',width:`${100-prog}%`,right:0,left:'auto'}}/>
+              <span style={{position:'relative'}}>{p.title} · {dayCount(p)}N · {prog}%</span>
+            </div>
+            {/* "Today" marker — placed in the SAME %-based coordinate system as the
+               bar above (pOf), inside each track individually. Safer than one
+               page-wide overlay: doesn't need to guess the label column's pixel
+               width from CSS we don't have on hand, and stays pixel-aligned with
+               the bars no matter the layout. */}
+            {todayInRange&&<div style={{position:'absolute',left:`${todayPct}%`,top:-3,bottom:-3,width:2,background:'var(--acc)',zIndex:2,borderRadius:1,pointerEvents:'none'}} title={`Hôm nay · ${fmtL(now)}`}/>}
           </div>
-        </div>
-        <button onClick={()=>delPhase(p.id)} style={{background:'none',border:'none',cursor:'pointer',color:'var(--dm)',fontSize:13,opacity:.4,marginLeft:6}}>×</button>
-      </div>;})}
+          <button onClick={()=>delPhase(p.id)} style={{background:'none',border:'none',cursor:'pointer',color:'var(--dm)',fontSize:13,opacity:.4,marginLeft:6}}>×</button>
+        </div>;})}
+    </div>
+    {coursePhases.length>0&&<div style={{display:'flex',gap:12,marginTop:8,justifyContent:'center'}}>
+      <span style={{fontSize:9,color:'var(--mu)'}}><span style={{color:'var(--dm)'}}>●</span> Đã qua</span>
+      <span style={{fontSize:9,color:'var(--mu)'}}><span style={{color:'var(--in)'}}>●</span> Đang ở đây</span>
+      <span style={{fontSize:9,color:'var(--mu)'}}><span style={{color:'var(--wa)'}}>●</span> Sắp tới</span>
+    </div>}
   </div>;}
 
 /* ── Sessions placeholder — Learning Objectives moved here per approved v12.1 spec
@@ -275,9 +316,9 @@ function finishSession(course,session,formData,onUpdateCourse,upd,data,awardXP,o
   const concepts=(course.concepts||[]).map(c=>{
     const t=formData.conceptTouches.find(ct=>ct.conceptId===c.id);
     if(!t)return c;
-    const before=calcMastery(c.touches||[],ms);
+    const before=calcProgress(c,ms);
     const newTouches=[...(c.touches||[]),{understanding:t.understanding,confidence:t.confidence,timestamp:Date.now(),sessionId:session.id}];
-    const after=calcMastery(newTouches,ms);
+    const after=calcProgress({...c,touches:newTouches},ms);
     masteryDeltas.push({conceptId:c.id,title:c.title,before,after});
     return{...c,touches:newTouches};
   });
@@ -722,7 +763,8 @@ function ConceptTouchModal({concept,color,onSave,onClose}){
 function ConceptRow({concept,color,examDate,data,course,upd,onTouch,onEdit,onDelete}){
   const [showHistory,setShowHistory]=useState(false);
   const touches=concept.touches||[];
-  const mastery=calcMastery(touches,data);
+  const isTask=concept.targetTouches>0;
+  const mastery=calcProgress(concept,data);
   const status=deriveConceptStatus(concept,examDate,data);
   const meta=STATUS_META[status];
   const reviewPriority=computeReviewPriority(concept,examDate,data);
@@ -740,9 +782,9 @@ function ConceptRow({concept,color,examDate,data,course,upd,onTouch,onEdit,onDel
         </div>
         <div style={{display:'flex',alignItems:'center',gap:6}}>
           <div style={{flex:1}}><Bar v={mastery} color={meta.color}/></div>
-          <span style={{fontSize:10,color:meta.color,fontWeight:700,minWidth:30,textAlign:'right'}}>{mastery}%</span>
+          <span style={{fontSize:10,color:meta.color,fontWeight:700,minWidth:34,textAlign:'right'}}>{isTask?`${touches.length}/${concept.targetTouches}`:`${mastery}%`}</span>
         </div>
-        <div style={{fontSize:9,color:meta.color,marginTop:2}}>{meta.label}{history.length>0&&<span style={{color:'var(--dm)'}}> · {history.length} lần đánh giá</span>}
+        <div style={{fontSize:9,color:meta.color,marginTop:2}}>{isTask?'Tiến độ task (đếm số lần hoàn thành, không phải EMA)':meta.label}{history.length>0&&<span style={{color:'var(--dm)'}}> · {history.length} lần đánh giá</span>}
           {history.length>1&&<span onClick={()=>setShowHistory(s=>!s)} style={{color:'var(--acc)',cursor:'pointer',marginLeft:6}}>{showHistory?'ẩn history ▲':'xem history ▼'}</span>}
         </div>
       </div>
@@ -754,9 +796,9 @@ function ConceptRow({concept,color,examDate,data,course,upd,onTouch,onEdit,onDel
     {showHistory&&history.length>1&&<div style={{marginTop:8,marginLeft:21,background:'var(--sur)',borderRadius:7,padding:'8px'}}>
       <div style={{display:'flex',alignItems:'flex-end',gap:3,height:40}}>
         {history.map((t,i)=>{
-          // Running EMA up to this point, so the sparkline matches calcMastery's trajectory
+          // Running progress up to this point, so the sparkline matches calcProgress's trajectory
           const runningTouches=history.slice(0,i+1);
-          const m=calcMastery(runningTouches,data);
+          const m=calcProgress({...concept,touches:runningTouches},data);
           return<div key={i} style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'flex-end',height:'100%'}} title={`${new Date(t.timestamp).toLocaleDateString('vi-VN')}: ${m}% (U${t.understanding}/C${t.confidence})`}>
             <div style={{width:'70%',height:`${Math.max(4,m)}%`,background:color,borderRadius:'2px 2px 0 0',opacity:.4+0.6*(i/(history.length-1||1))}}/>
           </div>;})}
@@ -770,17 +812,28 @@ function ConceptRow({concept,color,examDate,data,course,upd,onTouch,onEdit,onDel
 
 /* ── Concept editor: title, target date (optional, for schedule timeline), prerequisites (data
    model only per user's request — no UI yet). Objective links removed (Objectives now live in
-   Session, not Concept-side; a Session declares which Concepts it covers instead). ── */
+   Session, not Concept-side; a Session declares which Concepts it covers instead).
+   v13: optional "Task mode" (targetTouches) — for Concepts that represent a
+   deliverable needing N Sessions to actually finish (e.g. "Thuyết trình" =
+   3 Sessions), rather than knowledge learned through repetition. Left blank,
+   nothing changes — this is purely additive, 100% backward-compatible. ── */
 function ConceptEditorModal({concept,chapterId,onSave,onClose}){
-  const [f,setF]=useState(concept?{title:concept.title,targetDate:concept.targetDate||concept.legacyDueDate||''}:{title:'',targetDate:''});
+  const [f,setF]=useState(concept?{title:concept.title,targetDate:concept.targetDate||concept.legacyDueDate||'',targetTouches:concept.targetTouches||''}:{title:'',targetDate:'',targetTouches:''});
   const s=(k,v)=>setF(p=>({...p,[k]:v}));
-  const save=()=>{if(!f.title.trim())return;onSave(concept?{...concept,...f}:{id:uid(),chapterId,touches:[],objectiveIds:[],prerequisiteConceptIds:[],legacySubtasks:[],...f});};
+  const save=()=>{
+    if(!f.title.trim())return;
+    const clean={...f,targetTouches:f.targetTouches?Math.max(1,parseInt(f.targetTouches)||0)||undefined:undefined};
+    onSave(concept?{...concept,...clean}:{id:uid(),chapterId,touches:[],objectiveIds:[],prerequisiteConceptIds:[],legacySubtasks:[],...clean});
+  };
   return<div className="ov" onClick={onClose}><div className="modal" style={{maxWidth:400}} onClick={e=>e.stopPropagation()}>
     <div className="flex-sb" style={{marginBottom:12}}><span style={{fontSize:14,fontWeight:500}}>{concept?'✏️ Sửa Concept':'+ Concept mới'}</span><button className="btn-g btn-sm" onClick={onClose}>✕</button></div>
     <div className="tx-dm" style={{marginBottom:2}}>Tên concept *</div>
     <input className="inp" value={f.title} onChange={e=>s('title',e.target.value)} placeholder="VD: Maximum Likelihood Estimation..." style={{marginBottom:10}} autoFocus/>
     <div className="tx-dm" style={{marginBottom:2}}>Muốn thành thạo trước ngày nào (tùy chọn)</div>
-    <input type="date" className="inp" value={f.targetDate} onChange={e=>s('targetDate',e.target.value)} style={{marginBottom:14}}/>
+    <input type="date" className="inp" value={f.targetDate} onChange={e=>s('targetDate',e.target.value)} style={{marginBottom:10}}/>
+    <div className="tx-dm" style={{marginBottom:2}}>Concept dạng Task — cần bao nhiêu Session mới xong? (tùy chọn)</div>
+    <input type="number" min="1" className="inp" value={f.targetTouches} onChange={e=>s('targetTouches',e.target.value)} placeholder="Để trống = tính theo Mastery (kiến thức) như bình thường" style={{marginBottom:4}}/>
+    <div style={{fontSize:10,color:'var(--dm)',marginBottom:14}}>Điền số này nếu Concept là 1 việc cần làm (vd "Thuyết trình" cần 3 buổi) chứ không phải kiến thức cần học lại nhiều lần — % sẽ tính theo số buổi đã xong / số buổi cần, không dùng công thức Mastery nữa.</div>
     <div style={{display:'flex',gap:8}}><button className="btn-p" style={{flex:1,justifyContent:'center'}} onClick={save}>Lưu</button><button className="btn-g" onClick={onClose}>Huỷ</button></div>
   </div></div>;}
 
@@ -860,12 +913,21 @@ function KnowledgeNotesBlock({course,onUpdate}){
     </div>)}
   </div>;}
 
-/* ── Schedule timeline — reads Concept.targetDate (new) or legacyDueDate (migrated), colored by mastery status ── */
+/* ── Schedule timeline — reads Concept.targetDate (new) or legacyDueDate (migrated), colored by mastery status.
+   v13: sort by actual Date value (not string .localeCompare — fragile if any
+   date ever isn't zero-padded ISO) + show undated Concepts in their own group
+   instead of silently hiding them (was making the dated ones look "out of
+   order" since the sequence had invisible gaps). ── */
 function CourseScheduleView({course,data}){
-  const concepts=(course.concepts||[]).filter(c=>c.targetDate||c.legacyDueDate).map(c=>({...c,_date:c.targetDate||c.legacyDueDate})).sort((a,b)=>a._date.localeCompare(b._date));
-  if(concepts.length===0)return null;
-  const startAct=new Date(Math.min(new Date(concepts[0]._date).getTime(),Date.now()));startAct.setHours(0,0,0,0);
-  const endD=new Date(course.examDate||course.endDate||concepts[concepts.length-1]._date);endD.setHours(0,0,0,0);
+  const withDate=(course.concepts||[]).filter(c=>c.targetDate||c.legacyDueDate).map(c=>({...c,_date:c.targetDate||c.legacyDueDate})).sort((a,b)=>new Date(a._date)-new Date(b._date));
+  const noDate=(course.concepts||[]).filter(c=>!c.targetDate&&!c.legacyDueDate);
+  if(withDate.length===0&&noDate.length===0)return null;
+  if(withDate.length===0)return<div className="card" style={{marginBottom:10}}>
+    <div className="lbl" style={{marginBottom:6}}>📅 STUDY TIMELINE</div>
+    <div className="tx-dm">Chưa có Concept nào đặt ngày mục tiêu — xem "Chưa có ngày" bên dưới hoặc thêm ngày ở mỗi Concept.</div>
+  </div>;
+  const startAct=new Date(Math.min(new Date(withDate[0]._date).getTime(),Date.now()));startAct.setHours(0,0,0,0);
+  const endD=new Date(course.examDate||course.endDate||withDate[withDate.length-1]._date);endD.setHours(0,0,0,0);
   const totalMs=Math.max(1,endD-startAct);
   const todayPct=Math.max(0,Math.min(100,(new Date()-startAct)/totalMs*100));
   return<div className="card" style={{marginBottom:10}}>
@@ -875,7 +937,7 @@ function CourseScheduleView({course,data}){
       <div style={{position:'absolute',left:`${todayPct}%`,top:0,bottom:0,width:2,background:'var(--acc)',borderRadius:1}}/>
       <div style={{position:'absolute',left:`${todayPct}%`,top:-2,transform:'translateX(-50%)',background:'var(--acc)',color:'#fff',fontSize:8,fontWeight:700,borderRadius:3,padding:'1px 4px',whiteSpace:'nowrap'}}>Hôm nay</div>
     </div>
-    {concepts.map(c=>{
+    {withDate.map(c=>{
       const status=deriveConceptStatus(c,course.examDate,data);
       const meta=STATUS_META[status];
       const days=daysTo(c._date);
@@ -884,6 +946,12 @@ function CourseScheduleView({course,data}){
         <span style={{fontSize:11,flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{c.title}</span>
         <span style={{fontSize:10,color:meta.color,fontWeight:600,whiteSpace:'nowrap'}}>{days<=0?`${Math.abs(days)}N trước`:`còn ${days}N`}</span>
       </div>;})}
+    {noDate.length>0&&<div style={{marginTop:8,paddingTop:8,borderTop:'1px solid var(--bdr)'}}>
+      <div className="tx-dm" style={{marginBottom:4}}>Chưa có ngày mục tiêu ({noDate.length}):</div>
+      <div style={{display:'flex',flexWrap:'wrap',gap:5}}>
+        {noDate.map(c=><span key={c.id} style={{fontSize:10,background:'var(--sur)',border:'1px solid var(--bdr)',color:'var(--mu)',borderRadius:5,padding:'3px 7px'}}>{c.title}</span>)}
+      </div>
+    </div>}
   </div>;}
 
 /* ── Course Detail — full page assembly ── */

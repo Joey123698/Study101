@@ -602,15 +602,17 @@ function ParkingLotPage({data,upd}){
   const [newCat,setNewCat]=useState('');const [showCatMgr,setShowCatMgr]=useState(false);
   const [showDone,setShowDone]=useState(false);
   // Form state at top level (fixes Rules of Hooks)
-  const [taskForm,setTaskForm]=useState({text:'',category:'Khác',deadline:''});
+  const [taskForm,setTaskForm]=useState({text:'',category:'Khác',deadline:'',priority:'medium'});
   const [noteForm,setNoteForm]=useState({title:'',content:'',color:'#1A2038',noteType:'text',todos:[]});
   const tf=(k,v)=>setTaskForm(p=>({...p,[k]:v}));
   const nf=(k,v)=>setNoteForm(p=>({...p,[k]:v}));
 
   const tasks=data.parkingTasks||[];const notes=data.parkingNotes||[];const cats=data.parkingCategories||['Ý tưởng','Cần làm','Học tập','Khác'];
-  const undone=tasks.filter(t=>!t.done);const done=tasks.filter(t=>t.done);
+  const PRIORITY_META={high:{label:'Cao',color:'var(--cr)',order:0},medium:{label:'TB',color:'var(--wa)',order:1},low:{label:'Thấp',color:'var(--mu)',order:2}};
+  const undone=tasks.filter(t=>!t.done).sort((a,b)=>(PRIORITY_META[a.priority||'medium'].order-PRIORITY_META[b.priority||'medium'].order));
+  const done=tasks.filter(t=>t.done);
   const filtered=catFilter==='all'?undone:undone.filter(t=>t.category===catFilter);
-  const addTask=()=>{if(!taskForm.text.trim())return;upd({parkingTasks:[{id:uid(),...taskForm,done:false,date:TODAY},...tasks]});setTaskForm({text:'',category:cats[0]||'Khác',deadline:''});setShowAddTask(false);};
+  const addTask=()=>{if(!taskForm.text.trim())return;upd({parkingTasks:[{id:uid(),...taskForm,done:false,date:TODAY},...tasks]});setTaskForm({text:'',category:cats[0]||'Khác',deadline:'',priority:'medium'});setShowAddTask(false);};
   const updTask=(id,ch)=>upd({parkingTasks:tasks.map(t=>t.id===id?{...t,...ch}:t)});
   const delTask=id=>upd({parkingTasks:tasks.filter(t=>t.id!==id)});
   const addNote=()=>{upd({parkingNotes:[{id:uid(),...noteForm,date:TODAY},...notes]});setNoteForm({title:'',content:'',color:'#1A2038',noteType:'text',todos:[]});setShowAddNote(false);};
@@ -663,13 +665,18 @@ function ParkingLotPage({data,upd}){
             <div><div className="tx-dm" style={{marginBottom:2}}>Deadline</div>
               <input type="date" className="inp" value={editTask.deadline||''} onChange={e=>setEditTask(p=>({...p,deadline:e.target.value}))}/></div>
           </div>
-          <div style={{display:'flex',gap:5}}><button className="btn-p btn-sm" onClick={()=>{updTask(task.id,{text:editTask.text,category:editTask.category,deadline:editTask.deadline});setEditTask(null);}}>Lưu</button><button className="btn-g btn-sm" onClick={()=>setEditTask(null)}>Huỷ</button></div>
+          <div style={{marginBottom:8}}><div className="tx-dm" style={{marginBottom:2}}>Mức độ ưu tiên</div>
+            <select className="sel" value={editTask.priority||'medium'} onChange={e=>setEditTask(p=>({...p,priority:e.target.value}))}>
+              <option value="high">🔴 Cao</option><option value="medium">🟡 Trung bình</option><option value="low">⚪ Thấp</option>
+            </select></div>
+          <div style={{display:'flex',gap:5}}><button className="btn-p btn-sm" onClick={()=>{updTask(task.id,{text:editTask.text,category:editTask.category,deadline:editTask.deadline,priority:editTask.priority||'medium'});setEditTask(null);}}>Lưu</button><button className="btn-g btn-sm" onClick={()=>setEditTask(null)}>Huỷ</button></div>
         </div>;
         return<div key={task.id} className="ptask-row">
           <div style={{width:20,height:20,borderRadius:5,border:`1.5px solid ${task.done?'var(--su)':'var(--bdr)'}`,background:task.done?'var(--su)':'transparent',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0}} onClick={()=>updTask(task.id,{done:!task.done})}>{task.done&&<span style={{color:'#fff',fontSize:10,fontWeight:700}}>✓</span>}</div>
           <div style={{flex:1,minWidth:0}}>
-            <div style={{fontSize:12,textDecoration:task.done?'line-through':'none',opacity:task.done?.6:1,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{task.text}</div>
-            <div style={{display:'flex',gap:5,marginTop:1,alignItems:'center'}}>
+            <div style={{fontSize:12,textDecoration:task.done?'line-through':'none',opacity:task.done?.6:1,whiteSpace:'normal',wordBreak:'break-word'}}>{task.text}</div>
+            <div style={{display:'flex',gap:5,marginTop:1,alignItems:'center',flexWrap:'wrap'}}>
+              <span style={{fontSize:9,fontWeight:700,color:PRIORITY_META[task.priority||'medium'].color}}>● {PRIORITY_META[task.priority||'medium'].label}</span>
               <span style={{fontSize:9,background:'var(--acc2)',color:'var(--acc)',borderRadius:4,padding:'1px 5px'}}>{task.category}</span>
               {task.deadline&&<span style={{fontSize:9,color:dd<=0?'var(--cr)':dd<=3?'var(--wa)':'var(--dm)'}}>{dd<=0?'Quá hạn!':fmt(task.deadline)}</span>}
             </div>
@@ -737,7 +744,7 @@ function ParkingLotPage({data,upd}){
     {showAddTask&&<div className="ov" onClick={()=>setShowAddTask(false)}><div className="modal" style={{maxWidth:380}} onClick={e=>e.stopPropagation()}>
       <div className="flex-sb" style={{marginBottom:12}}><span style={{fontSize:14,fontWeight:500}}>+ Task mới</span><button className="btn-g btn-sm" onClick={()=>setShowAddTask(false)}>✕</button></div>
       <input className="inp" value={taskForm.text} onChange={e=>tf('text',e.target.value)} placeholder="Nội dung task..." style={{marginBottom:8}} autoFocus onKeyDown={e=>e.key==='Enter'&&addTask()}/>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:14}}>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}>
         <div><div className="tx-dm" style={{marginBottom:2}}>Category</div>
           <select className="sel" value={taskForm.category} onChange={e=>tf('category',e.target.value)}>
             {cats.map(c=><option key={c} value={c}>{c}</option>)}
@@ -745,6 +752,10 @@ function ParkingLotPage({data,upd}){
         <div><div className="tx-dm" style={{marginBottom:2}}>Deadline</div>
           <input type="date" className="inp" value={taskForm.deadline} onChange={e=>tf('deadline',e.target.value)}/></div>
       </div>
+      <div style={{marginBottom:14}}><div className="tx-dm" style={{marginBottom:2}}>Mức độ ưu tiên</div>
+        <select className="sel" value={taskForm.priority||'medium'} onChange={e=>tf('priority',e.target.value)}>
+          <option value="high">🔴 Cao</option><option value="medium">🟡 Trung bình</option><option value="low">⚪ Thấp</option>
+        </select></div>
       <div style={{display:'flex',gap:8}}><button className="btn-p" style={{flex:1,justifyContent:'center'}} onClick={addTask}>Thêm</button><button className="btn-g" onClick={()=>setShowAddTask(false)}>Huỷ</button></div>
     </div></div>}
 

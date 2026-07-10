@@ -112,6 +112,13 @@ function DashboardPage({data,upd,nav,awardXP}){
   const [perfDate,setPerfDate]=useState(TODAY);
   const phase=data.uniPhases.find(p=>p.id===data.currentUniPhaseId);
   const crits=data.courses.filter(c=>c.risk==='critical'&&!c.archived);
+  const todayDOW=new Date(TODAY+'T12:00:00').getDay();
+  const classesToday=data.courses.filter(c=>!c.archived&&(c.scheduleDOW||[]).includes(todayDOW));
+  const togCourseAttend=(course)=>{
+    const cur=(course.attendance||{})[TODAY]||{attended:false,note:''};
+    const na={...(course.attendance||{}),[TODAY]:{...cur,attended:!cur.attended}};
+    upd({courses:data.courses.map(c=>c.id===course.id?{...c,attendance:na}:c)});
+  };
   // dailyFocus helpers
   const fd=getDayFocus(data,focusDate);
   const stale=focusDate===TODAY&&!fd.mustDo?.text&&!fd.top3?.some(t=>t.text);
@@ -127,12 +134,41 @@ function DashboardPage({data,upd,nav,awardXP}){
   const weekH=data.studyLog.filter(l=>wd.includes(l.date)).reduce((s,l)=>s+l.hours,0);
   const selEvs=getEventsOnDate(data.events,selDate).sort((a,b)=>a.time.localeCompare(b.time));
   const recAdmin=data.adminTasks.recurring.filter(r=>r.dow.includes(adminDow));
-  const dailyAdmin=data.adminTasks.daily[adminDate]||[];
-  const allAdmin=[...recAdmin.map(r=>({...r,src:'rec'})),...dailyAdmin.map(t=>({...t,src:'day'}))];
+  // dailyAdmin previously also swept up 'rec_'-prefixed completion markers
+  // (stored in the same daily[date] bucket) and mislabeled them src:'day',
+  // causing a duplicate of the recurring item to render. Filter those out —
+  // they're completion state for recAdmin items, not standalone tasks.
+  const dailyAdmin=(data.adminTasks.daily[adminDate]||[]).filter(t=>!String(t.id).startsWith('rec_'));
+  // Carry-over: one-off ("day") admin tasks from a PAST date that are still
+  // not done — surfaced on TODAY's view too, instead of staying buried on a
+  // date you'd have to navigate back to find. Only applies when viewing
+  // today (not when browsing other dates via ‹ ›), and never touches
+  // recurring completion markers.
+  const overdueAdmin=adminDate===TODAY?Object.entries(data.adminTasks.daily||{})
+    .filter(([date])=>date<TODAY)
+    .flatMap(([date,items])=>(items||[]).filter(t=>!String(t.id).startsWith('rec_')&&!t.done).map(t=>({...t,src:'day',overdueFrom:date})))
+    :[];
+  const allAdmin=[...recAdmin.map(r=>({...r,src:'rec'})),...dailyAdmin.map(t=>({...t,src:'day'})),...overdueAdmin];
   const perfD=(date)=>{const p=data.dailyPerf[date]||{};const h=data.studyLog.filter(l=>l.date===date).reduce((s,l)=>s+l.hours,0);const act=data.habits.filter(x=>!x.archived);return{...p,h,hd:act.filter(x=>x.completions[date]).length,ht:act.length};};
   const perf=perfD(perfDate);
   const isAdminDone=(item)=>{if(item.src==='rec'){const d=data.adminTasks.daily[adminDate]||[];return d.find(t=>t.id===`rec_${item.id}`)?.done||false;}return item.done||false;};
-  const togAdmin=(item)=>{const at={...data.adminTasks,daily:{...data.adminTasks.daily}};const existing=at.daily[adminDate]||[];if(item.src==='rec'){const key=`rec_${item.id}`;const idx=existing.findIndex(t=>t.id===key);if(idx>=0)at.daily[adminDate]=existing.map(t=>t.id===key?{...t,done:!t.done}:t);else at.daily[adminDate]=[...existing,{id:key,title:item.title,done:true}];}else{at.daily[adminDate]=existing.map(t=>t.id===item.id?{...t,done:!t.done}:t);}upd({adminTasks:at});};
+  const togAdmin=(item)=>{
+    const at={...data.adminTasks,daily:{...data.adminTasks.daily}};
+    if(item.src==='rec'){
+      const existing=at.daily[adminDate]||[];
+      const key=`rec_${item.id}`;
+      const idx=existing.findIndex(t=>t.id===key);
+      if(idx>=0)at.daily[adminDate]=existing.map(t=>t.id===key?{...t,done:!t.done}:t);
+      else at.daily[adminDate]=[...existing,{id:key,title:item.title,done:true}];
+    } else {
+      // Overdue items belong to their ORIGINAL date bucket, not today's —
+      // update it there so completing it doesn't lose or duplicate history.
+      const homeDate=item.overdueFrom||adminDate;
+      const existing=at.daily[homeDate]||[];
+      at.daily[homeDate]=existing.map(t=>t.id===item.id?{...t,done:!t.done}:t);
+    }
+    upd({adminTasks:at});
+  };
   const saveRating=(r)=>{const dp={...data.dailyPerf,[perfDate]:{...(data.dailyPerf[perfDate]||{}),rating:r}};upd({dailyPerf:dp});};
   const navPerf=(d)=>{const nd=new Date(perfDate);nd.setDate(nd.getDate()+d);const s=toLocalDateStr(nd);if(s<=TODAY)setPerfDate(s);};
   const sorted=[...data.courses].filter(c=>!c.archived).sort((a,b)=>{const o={critical:0,watch:1,medium:2,good:3};return(o[a.risk]??2)-(o[b.risk]??2);});
@@ -228,6 +264,18 @@ function DashboardPage({data,upd,nav,awardXP}){
     {overdueDeadlines.length>0&&<div style={{background:'var(--wab)',border:'1px solid var(--waBdr)',borderRadius:10,padding:'9px 13px',marginBottom:10,fontSize:11,color:'var(--wa)'}}>
       ⚠️ {overdueDeadlines.length} deadline đã quá hạn — xem bên dưới
     </div>}
+    {classesToday.length>0&&<div className="card" style={{marginBottom:10}}>
+      <div className="lbl" style={{marginBottom:6}}>📋 ĐIỂM DANH HÔM NAY</div>
+      {classesToday.map(c=>{
+        const attended=((c.attendance||{})[TODAY]||{}).attended;
+        return<div key={c.id} style={{display:'flex',alignItems:'center',gap:8,padding:'4px 0'}}>
+          <div onClick={()=>togCourseAttend(c)} style={{width:20,height:20,borderRadius:5,border:`1.5px solid ${attended?c.color:'var(--bdr)'}`,background:attended?c.color+'33':'transparent',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0}}>
+            {attended&&<span style={{color:c.color,fontSize:11,fontWeight:700}}>✓</span>}
+          </div>
+          <span style={{fontSize:12,flex:1}}>{c.emoji} {c.name}</span>
+          <span style={{fontSize:10,color:attended?c.color:'var(--dm)',fontWeight:600}}>{attended?'Đã điểm danh':'Chưa điểm danh'}</span>
+        </div>;})}
+    </div>}
     {(upcomingDeadlines.length>0||overdueDeadlines.length>0)&&<div className="card" style={{marginBottom:10}}>
       <div className="flex-sb" style={{marginBottom:8}}><div className="lbl" style={{margin:0}}>⏰ DEADLINES (từ tất cả môn học)</div><button className="btn-g btn-sm" onClick={()=>nav('courses')}>Xem môn học →</button></div>
       {overdueDeadlines.slice(0,3).map((d,i)=><div key={'o'+i} className="deadline-row">
@@ -310,9 +358,10 @@ function DashboardPage({data,upd,nav,awardXP}){
           <div style={{width:20,height:20,borderRadius:4,border:`1.5px solid ${done?'var(--su)':'var(--bdr)'}`,background:done?'var(--su)':'transparent',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0,fontSize:10}}
             onClick={()=>togAdmin(item)}>{done&&<span style={{color:'#fff',fontWeight:700}}>✓</span>}</div>
           <span style={{fontSize:12,textDecoration:done?'line-through':'none',opacity:done?.6:1,flex:1}}>{item.emoji} {item.title}</span>
+          {item.overdueFrom&&<span style={{fontSize:9,color:'var(--cr)',fontWeight:700}} title={`Chưa xong từ ${fmt(item.overdueFrom)}`}>Quá hạn</span>}
           {item.src==='rec'&&<span style={{fontSize:9,color:'var(--dm)'}}>↻</span>}
           <button onClick={()=>setEditAdmin({src:item.src,item})} style={{background:'none',border:'none',cursor:'pointer',color:'var(--dm)',fontSize:11,opacity:.5}}>✏️</button>
-          {item.src==='day'&&<button style={{background:'none',border:'none',cursor:'pointer',color:'var(--dm)',fontSize:12,opacity:.5}} onClick={()=>{const at={...data.adminTasks,daily:{...data.adminTasks.daily}};at.daily[adminDate]=(at.daily[adminDate]||[]).filter(t=>t.id!==item.id);upd({adminTasks:at});}}>×</button>}
+          {item.src==='day'&&<button style={{background:'none',border:'none',cursor:'pointer',color:'var(--dm)',fontSize:12,opacity:.5}} onClick={()=>{const homeDate=item.overdueFrom||adminDate;const at={...data.adminTasks,daily:{...data.adminTasks.daily}};at.daily[homeDate]=(at.daily[homeDate]||[]).filter(t=>t.id!==item.id);upd({adminTasks:at});}}>×</button>}
         </div>;})}
         <button className="btn-g btn-sm" style={{marginTop:8,width:'100%',justifyContent:'center'}} onClick={()=>setShowAddAdmin(true)}>+ Thêm task {adminDate===TODAY?'hôm nay':fmt(adminDate)}</button>
       </div>

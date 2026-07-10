@@ -4,7 +4,6 @@
 const PAGES=[
   {id:'mission',label:'Mission',emoji:'🎯',sec:'THỰC THI'},
   {id:'journal',label:'Nhật ký học',emoji:'📓',sec:'THỰC THI'},
-  {id:'timer',label:'Timer / Pomodoro',emoji:'⏱️',sec:'THỰC THI'},
   {id:'parking',label:'Parking Lot',emoji:'🅿️',sec:'THỰC THI'},
   {id:'courses',label:'Môn học',emoji:'📚',sec:'HỌC'},
   {id:'language',label:'Ngôn ngữ',emoji:'🌐',sec:'HỌC'},
@@ -26,6 +25,7 @@ function App(){
   const [syncing,setSyncing]=useState(false);const [syncErr,setSyncErr]=useState(false);const [lastSync,setLastSync]=useState(null);
   const [page,setPage]=useState('mission');const [pageParams,setPageParams]=useState({});
   const [sbOpen,setSbOpen]=useState(true);
+  const [showTimer,setShowTimer]=useState(false);
   const [expandedNav,setExpandedNav]=useState({});
   const saveTimer=useRef(null);const saving=useRef(false);const unsubRef=useRef(null);
 
@@ -78,7 +78,6 @@ function App(){
     if(page==='dashboard')return<DashboardPage data={data} upd={upd} nav={nav} awardXP={awardXP}/>;
     if(page==='uniphase')return<UniPhasePage data={data} upd={upd}/>;
     if(page==='timeline')return<TimelinePage data={data}/>;
-    if(page==='timer')return<TimerPage data={data} upd={upd} awardXP={awardXP} nav={nav}/>;
     if(page==='journal')return<StudyJournalPage data={data} upd={upd} awardXP={awardXP}/>;
     if(page==='courses')return<CoursesPage data={data} upd={upd} awardXP={awardXP} initCourseId={pageParams.courseId}/>;
     if(page==='language')return<LanguagePage data={data} upd={upd}/>;
@@ -154,10 +153,23 @@ function App(){
           <div style={{fontSize:14,fontWeight:500}}>{cp?.emoji} {cp?.label}</div>
           {page==='courses'&&pageParams.courseId&&<button className="btn-g btn-sm" onClick={()=>nav('courses')} style={{marginLeft:4}}>← Danh sách môn</button>}
         </div>
-        <div style={{fontSize:11,color:'var(--mu)'}}>{new Date().toLocaleDateString('vi-VN',{day:'numeric',month:'numeric',year:'numeric'})}</div>
+        <div style={{display:'flex',alignItems:'center',gap:10}}>
+          <button className="btn-g btn-sm" title="Timer / Pomodoro — cho hoạt động ngoài môn học (tìm việc, đọc sách...)" onClick={()=>setShowTimer(true)} style={{fontSize:13}}>⏱️</button>
+          <div style={{fontSize:11,color:'var(--mu)'}}>{new Date().toLocaleDateString('vi-VN',{day:'numeric',month:'numeric',year:'numeric'})}</div>
+        </div>
       </div>
       <div className="scroll"><div className="content">{renderPage()}</div></div>
     </div>
+    {showTimer&&<div className="ov" onClick={()=>setShowTimer(false)}>
+      <div className="modal" style={{maxWidth:520,maxHeight:'85vh',overflowY:'auto'}} onClick={e=>e.stopPropagation()}>
+        <div className="flex-sb" style={{marginBottom:10}}>
+          <span style={{fontSize:14,fontWeight:600}}>⏱️ Timer / Pomodoro</span>
+          <button className="btn-g btn-sm" onClick={()=>setShowTimer(false)}>✕</button>
+        </div>
+        <div className="tx-dm" style={{marginBottom:10}}>Dùng cho hoạt động ngoài môn học (tìm việc, đọc sách, volunteer...). Học có Concept cụ thể thì dùng Quick Session trong trang Môn học sẽ chính xác hơn.</div>
+        <TimerPage data={data} upd={upd} awardXP={awardXP} nav={nav}/>
+      </div>
+    </div>}
   </div>;}
 
 ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
