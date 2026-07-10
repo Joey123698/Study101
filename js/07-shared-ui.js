@@ -174,8 +174,13 @@ function AddEventModal({initDate,existing,onSave,onClose}){
     <div style={{display:'flex',gap:8}}><button className="btn-p" style={{flex:1,justifyContent:'center'}} onClick={()=>f.title&&onSave(existing?{...existing,...f}:{...f,id:uid()})}>{existing?'Lưu':'Thêm'}</button><button className="btn-g" onClick={onClose}>Huỷ</button></div>
   </div></div>;}
 
-function EditHabitModal({habit,onSave,onArchive,onClose}){
-  const [f,setF]=useState({name:habit.name,emoji:habit.emoji,color:habit.color});
+/* ── v13: optional Goal link — Habit can (optionally) belong to a Goal from
+   any Uni Phase, so it shows up grouped under that Goal on Uni Phase Plan
+   instead of floating disconnected. Left unset, nothing changes for any
+   existing habit. ── */
+function EditHabitModal({habit,data,onSave,onArchive,onClose}){
+  const [f,setF]=useState({name:habit.name,emoji:habit.emoji,color:habit.color,goalId:habit.goalId||''});
+  const allGoals=(data?.uniPhases||[]).flatMap(p=>(p.goals||[]).map(g=>({...g,phaseName:p.name})));
   return<div className="ov" onClick={onClose}><div className="modal" style={{maxWidth:340}} onClick={e=>e.stopPropagation()}>
     <div className="flex-sb" style={{marginBottom:12}}><span style={{fontSize:14,fontWeight:500}}>Chỉnh sửa Habit</span><button className="btn-g btn-sm" onClick={onClose}>✕</button></div>
     <div style={{display:'grid',gridTemplateColumns:'50px 1fr',gap:8,marginBottom:10}}>
@@ -183,7 +188,14 @@ function EditHabitModal({habit,onSave,onArchive,onClose}){
       <div><div className="tx-dm" style={{marginBottom:2}}>Tên</div><input className="inp" value={f.name} onChange={e=>setF(p=>({...p,name:e.target.value}))}/></div>
     </div>
     <div className="tx-dm" style={{marginBottom:5}}>Màu</div>
-    <div style={{display:'flex',gap:6,marginBottom:14,flexWrap:'wrap'}}>{PAL.map(c=><div key={c} onClick={()=>setF(p=>({...p,color:c}))} style={{width:22,height:22,borderRadius:'50%',background:c,cursor:'pointer',border:`3px solid ${f.color===c?'#fff':'transparent'}`}}/>)}</div>
+    <div style={{display:'flex',gap:6,marginBottom:10,flexWrap:'wrap'}}>{PAL.map(c=><div key={c} onClick={()=>setF(p=>({...p,color:c}))} style={{width:22,height:22,borderRadius:'50%',background:c,cursor:'pointer',border:`3px solid ${f.color===c?'#fff':'transparent'}`}}/>)}</div>
+    {allGoals.length>0&&<>
+      <div className="tx-dm" style={{marginBottom:2}}>Phục vụ Goal nào? (tuỳ chọn)</div>
+      <select className="sel" value={f.goalId} onChange={e=>setF(p=>({...p,goalId:e.target.value}))} style={{marginBottom:14,width:'100%'}}>
+        <option value="">— Không liên kết —</option>
+        {allGoals.map(g=><option key={g.id} value={g.id}>{g.icon} {g.text} ({g.phaseName})</option>)}
+      </select>
+    </>}
     <div style={{display:'flex',gap:8}}>
       <button className="btn-p" style={{flex:1,justifyContent:'center'}} onClick={()=>onSave({...habit,...f})}>Lưu</button>
       <button className="btn-g" onClick={()=>onArchive(habit.id)} style={{color:'var(--wa)'}}>Archive</button>

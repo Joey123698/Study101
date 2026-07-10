@@ -427,6 +427,25 @@ function SessionEditorModal({session,concepts,onSave,onClose}){
 
 /* ── Finish Study modal: reflection, questions, action items, confidence/difficulty,
    per-concept touch ratings, notes. This is where mastery actually updates. ── */
+/* ── v13: one-time bottom-sheet CSS, injected like applyTheme's #br-override
+   in 02-theme.js. Pilot for FinishSessionModal ONLY (per user's request:
+   try 1 spot before considering it everywhere — Finish is the most-used
+   modal in the app, so it's the highest-signal place to try). Keeps ALL of
+   FinishSessionModal's internal fields/logic untouched — only the outer
+   shell changes from centered popup to a sheet anchored at the bottom. ── */
+(function injectBottomSheetCSS(){
+  if(document.getElementById('bs-style'))return;
+  const el=document.createElement('style');el.id='bs-style';
+  el.textContent=`
+    .bs-ov{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:999;display:flex;align-items:flex-end;justify-content:center;animation:bsFadeIn .2s ease}
+    .bs-panel{background:var(--card);border-radius:16px 16px 0 0;width:100%;max-width:560px;max-height:88vh;overflow-y:auto;padding:10px 18px 22px;box-sizing:border-box;animation:bsSlideUp .25s cubic-bezier(.16,1,.3,1);box-shadow:0 -8px 30px rgba(0,0,0,.35)}
+    .bs-handle{width:36px;height:4px;background:var(--bdr);border-radius:2px;margin:0 auto 14px;cursor:pointer}
+    @keyframes bsSlideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
+    @keyframes bsFadeIn{from{opacity:0}to{opacity:1}}
+  `;
+  document.head.appendChild(el);
+})();
+
 function FinishSessionModal({session,concepts,currentChecklist,onSave,onClose}){
   const sessionConcepts=concepts.filter(c=>(session.conceptIds||[]).includes(c.id));
   const [reflection,setReflection]=useState('');
@@ -445,7 +464,8 @@ function FinishSessionModal({session,concepts,currentChecklist,onSave,onClose}){
     {[1,2,3,4,5].map(n=><button key={n} onClick={()=>onChange(n)} style={{flex:1,padding:'7px 0',borderRadius:6,border:`1.5px solid ${value>=n?activeColor:'var(--bdr)'}`,background:value>=n?activeColor+'22':'transparent',color:value>=n?activeColor:'var(--dm)',cursor:'pointer',fontSize:12,fontWeight:700}}>{n}</button>)}
   </div>;
 
-  return<div className="ov" onClick={onClose}><div className="modal" style={{maxWidth:440,maxHeight:'85vh',overflowY:'auto'}} onClick={e=>e.stopPropagation()}>
+  return<div className="bs-ov" onClick={onClose}><div className="bs-panel" onClick={e=>e.stopPropagation()}>
+    <div className="bs-handle" onClick={onClose} title="Đóng"/>
     <div className="flex-sb" style={{marginBottom:4}}><span style={{fontSize:15,fontWeight:600}}>🏁 Kết thúc buổi học</span><button className="btn-g btn-sm" onClick={onClose}>✕</button></div>
     <div className="tx-dm" style={{marginBottom:16}}>{session.title}</div>
 

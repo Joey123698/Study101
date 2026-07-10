@@ -121,7 +121,21 @@ function computeNextAction(data){
       reason:`"${concept.title}" đang cần ôn gấp (Review Priority cao) và chưa có Session nào phủ.`};
   }
 
-  // Rule 5 — Fallback: không có gì khẩn cấp.
+  // Rule 5 — Language (tín hiệu nhẹ): chỉ xét khi không còn gì cấp bách hơn ở
+  // trên. Ngôn ngữ nào hôm nay CHƯA ghi log gì (chưa điểm danh, chưa ghi phút
+  // tự học) thì gợi ý nhẹ — không thay thế tracking chi tiết ở trang Ngôn
+  // ngữ, chỉ là Decision Engine giờ "biết" ngôn ngữ tồn tại, đúng góp ý đã
+  // thống nhất (trước đây Decision Engine hoàn toàn không đụng tới data.languages).
+  const languageCandidates=(data.languages||[]).filter(l=>{
+    const loggedToday=(l.log?.[`${TODAY}_self_min`]||0)>0||l.log?.[`${TODAY}_class`];
+    return !loggedToday;
+  });
+  if(languageCandidates.length>0){
+    const lang=languageCandidates[0];
+    return{kind:'language',lang,reason:`Hôm nay chưa ghi gì cho ${lang.name} — dành ít phút cũng được.`};
+  }
+
+  // Rule 6 — Fallback: không có gì khẩn cấp.
   return{kind:'idle',reason:'Không có gì gấp lúc này — bạn có thể tự chọn việc muốn làm.'};
 }
 
@@ -138,6 +152,19 @@ function NextActionBanner({data,upd,awardXP,nav,onlyCourseId}){
   if(next.kind==='idle')return<div className="card" style={{marginBottom:10,textAlign:'center',padding:'12px',border:'1px dashed var(--bdr)'}}>
     <span style={{fontSize:12,color:'var(--mu)'}}>✅ {next.reason}</span>
   </div>;
+
+  // 'language' has no `course` (uses `lang` instead) — handle as its own early
+  // return, same reason 'idle' is handled above this line, before `next.course`
+  // gets destructured unconditionally for every other kind.
+  if(next.kind==='language'){
+    const{lang}=next;
+    return<div className="card" style={{marginBottom:10,border:`1.5px solid ${lang.color}55`,background:lang.color+'0d'}}>
+      <div style={{fontSize:10,fontWeight:700,color:lang.color,marginBottom:4,letterSpacing:'.03em'}}>📍 GỢI Ý NHẸ</div>
+      <div style={{fontSize:13,fontWeight:600,marginBottom:2}}>{lang.emoji} {lang.name}</div>
+      <div style={{fontSize:11,color:'var(--mu)',marginBottom:8}}>{next.reason}</div>
+      {nav&&<button className="btn-p" style={{width:'100%',justifyContent:'center'}} onClick={()=>nav('language')}>→ Vào Ngôn ngữ</button>}
+    </div>;
+  }
 
   const{course}=next;
   const cardStyle={marginBottom:10,border:`1.5px solid ${course.color}55`,background:course.color+'0d'};

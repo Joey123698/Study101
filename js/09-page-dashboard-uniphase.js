@@ -596,6 +596,10 @@ function UniPhasePage({data,upd}){
             </div>}
             {isGerman&&<div style={{fontSize:10,color:'var(--dm)',marginTop:4}}>📊 Tự tính từ Language tab · 40% vocab + 30% ngữ pháp + 20% nói + 10% viết</div>}
             {!isGerman&&<div style={{fontSize:10,color:'var(--dm)',marginTop:3}}>📊 {g.hint}</div>}
+            {(data.habits||[]).filter(h=>!h.archived&&h.goalId===g.id).length>0&&<div style={{marginTop:6,paddingTop:6,borderTop:'1px solid var(--bdr)',display:'flex',gap:6,flexWrap:'wrap'}}>
+              {(data.habits||[]).filter(h=>!h.archived&&h.goalId===g.id).map(h=>{const done=h.completions[TODAY];const str=hStreak(h.completions);
+                return<span key={h.id} style={{fontSize:9,display:'flex',alignItems:'center',gap:3,background:done?h.color+'22':'var(--card)',color:done?h.color:'var(--mu)',border:`1px solid ${done?h.color+'55':'var(--bdr)'}`,borderRadius:5,padding:'2px 6px'}}>{h.emoji} {h.name}{str>0&&` 🔥${str}`}</span>;})}
+            </div>}
             {eg?.gId===g.id&&<div style={{marginTop:7,display:'flex',gap:5,alignItems:'center'}}>
               <input type="range" min={0} max={100} step={5} value={eg.v} onChange={e=>setEg(p=>({...p,v:+e.target.value}))} style={{flex:1}}/>
               <span style={{fontSize:12,color:'var(--acc)',fontWeight:600,minWidth:30}}>{eg.v}%</span>

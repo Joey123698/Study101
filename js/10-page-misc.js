@@ -191,6 +191,8 @@ function HabitsPage({data,upd}){
   const [showAdd,setShowAdd]=useState(false);const [editH,setEditH]=useState(null);const [showArch,setShowArch]=useState(false);
   const wd=weekDates();
   const wdObjs=wd.map(ds=>new Date(ds));
+  const allGoals=(data.uniPhases||[]).flatMap(p=>p.goals||[]);
+  const goalOf=(habit)=>habit.goalId?allGoals.find(g=>g.id===habit.goalId):null;
   const tog=(hid,date)=>upd({habits:data.habits.map(h=>h.id===hid?{...h,completions:{...h.completions,[date]:!h.completions[date]}}:h)});
   const active=data.habits.filter(h=>!h.archived);const archived=data.habits.filter(h=>h.archived);
   const done=active.filter(h=>h.completions[TODAY]).length;
@@ -220,7 +222,7 @@ function HabitsPage({data,upd}){
             <span style={{fontSize:13}}>{h.emoji}</span>
             <div style={{flex:1,minWidth:0}}>
               <div style={{fontSize:11,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{h.name}</div>
-              <div style={{display:'flex',gap:7}}>{str>0&&<span style={{fontSize:9,color:h.color}}>🔥{str}</span>}<span style={{fontSize:9,color:'var(--dm)'}}>{r30}%</span></div>
+              <div style={{display:'flex',gap:7,alignItems:'center'}}>{str>0&&<span style={{fontSize:9,color:h.color}}>🔥{str}</span>}<span style={{fontSize:9,color:'var(--dm)'}}>{r30}%</span>{goalOf(h)&&<span style={{fontSize:8,background:'var(--acc2)',color:'var(--acc)',borderRadius:3,padding:'0 4px'}}>{goalOf(h).icon} Goal</span>}</div>
             </div>
             <button onClick={()=>setEditH(h)} style={{background:'none',border:'none',cursor:'pointer',color:'var(--dm)',fontSize:11,opacity:.6,flexShrink:0}}>✏️</button>
           </div>
@@ -254,7 +256,7 @@ function HabitsPage({data,upd}){
         <button className="btn-g" onClick={()=>setShowAdd(false)}>Huỷ</button>
       </div>
     </div></div>}
-    {editH&&<EditHabitModal habit={editH} onSave={h=>{upd({habits:data.habits.map(x=>x.id===h.id?h:x)});setEditH(null);}} onArchive={id=>{upd({habits:data.habits.map(h=>h.id===id?{...h,archived:true}:h)});setEditH(null);}} onClose={()=>setEditH(null)}/>}
+    {editH&&<EditHabitModal habit={editH} data={data} onSave={h=>{upd({habits:data.habits.map(x=>x.id===h.id?h:x)});setEditH(null);}} onArchive={id=>{upd({habits:data.habits.map(h=>h.id===id?{...h,archived:true}:h)});setEditH(null);}} onClose={()=>setEditH(null)}/>}
   </div>;}
 
 /* ── V11: STUDY HEATMAP — signature element, inspired by reference image's writing-stats calendar ── */
