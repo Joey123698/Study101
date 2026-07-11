@@ -126,6 +126,28 @@ function CourseAttendance({course,onUpdate}){
    color for everything — plus a date ruler (start/today/end, with weekday)
    and a "today" line running through every bar, so the timeline actually
    reads as a timeline instead of a list of same-colored bars. ── */
+/* ── v13: shared date ruler — evenly-spaced tick marks with weekday + date,
+   used by both CoursePhaseGantt and CourseScheduleView so "hiển thị ngày cụ
+   thể theo dạng lịch ở trên cùng" (per user's reference screenshots) looks
+   the same in both places. A full day-by-day header (like the Excel example)
+   isn't practical for a ~2-month range in a narrow card, so this shows N
+   evenly-spaced markers instead — a deliberate scaled-down compromise, not
+   a 1:1 reproduction of the reference image. ── */
+function TimelineRuler({start,end,ticks=5}){
+  const s=new Date(start);s.setHours(0,0,0,0);
+  const e=new Date(end);e.setHours(0,0,0,0);
+  const totalMs=Math.max(1,e-s);
+  const points=Array.from({length:ticks},(_,i)=>{
+    const t=new Date(s.getTime()+totalMs*(i/(ticks-1)));
+    return{pct:(i/(ticks-1))*100,date:t};
+  });
+  return<div style={{position:'relative',height:24,marginBottom:6}}>
+    {points.map((p,i)=><div key={i} style={{position:'absolute',left:`${p.pct}%`,transform:i===0?'translateX(0)':i===ticks-1?'translateX(-100%)':'translateX(-50%)',textAlign:'center',whiteSpace:'nowrap'}}>
+      <div style={{fontSize:8,color:'var(--dm)',fontWeight:600}}>{DV[p.date.getDay()]}</div>
+      <div style={{fontSize:9,color:'var(--mu)'}}>{String(p.date.getDate()).padStart(2,'0')}/{String(p.date.getMonth()+1).padStart(2,'0')}</div>
+    </div>)}
+  </div>;}
+
 function CoursePhaseGantt({course,onUpdate,data}){
   const [showAdd,setShowAdd]=useState(false);
   const [editId,setEditId]=useState(null);
@@ -180,10 +202,21 @@ function CoursePhaseGantt({course,onUpdate,data}){
       <div style={{display:'flex',gap:6}}><button className="btn-p btn-sm" onClick={save}>{editId?'Lưu':'Thêm'}</button><button className="btn-g btn-sm" onClick={()=>{setShowAdd(false);setEditId(null);}}>Huỷ</button></div>
     </div>}
     {coursePhases.length===0&&!showAdd&&<div className="tx-dm" style={{textAlign:'center',padding:'10px'}}>Chưa có Phase nào — bấm "+ Thêm Phase" để tạo</div>}
-    {coursePhases.length>0&&<div style={{display:'flex',justifyContent:'space-between',marginBottom:6,paddingLeft:'var(--gantt-label-w, 0)'}}>
-      <span style={{fontSize:9,color:'var(--dm)'}}>{fmtL(start)}</span>
-      <span style={{fontSize:9,color:'var(--dm)'}}>{fmtL(end)}</span>
-    </div>}
+    {coursePhases.length>0&&<>
+      <TimelineRuler start={start} end={end} ticks={5}/>
+      {(()=>{
+        const currentPhase=coursePhases.find(p=>phaseTiming(p)==='current');
+        if(!currentPhase)return todayInRange?null:<div style={{textAlign:'center',fontSize:10,color:'var(--dm)',marginBottom:6}}>Hôm nay ({fmtL(now)}) nằm ngoài các Phase đã khai báo.</div>;
+        const ps=new Date(currentPhase.startDate||TODAY);ps.setHours(0,0,0,0);
+        const pe=new Date(currentPhase.endDate||currentPhase.startDate||TODAY);pe.setHours(0,0,0,0);
+        const totalD=Math.max(1,Math.round((pe-ps)/86400000)+1);
+        const passedD=Math.min(totalD,Math.max(0,Math.round((now-ps)/86400000)+1));
+        const leftD=Math.max(0,totalD-passedD);
+        return<div style={{textAlign:'center',marginBottom:8,fontSize:11}}>
+          📍 Đang ở <b style={{color:'var(--in)'}}>{currentPhase.title}</b> — đã qua {passedD} ngày · còn {leftD} ngày <span style={{color:'var(--dm)'}}>(trong tổng {totalD} ngày)</span>
+        </div>;
+      })()}
+    </>}
     <div style={{position:'relative'}}>
       {coursePhases.map(p=>{
         const prog=phaseProgress(p,course.chapters||[],course.concepts||[],data);
@@ -468,6 +501,10 @@ function FinishSessionModal({session,concepts,currentChecklist,onSave,onClose}){
     <div className="bs-handle" onClick={onClose} title="Đóng"/>
     <div className="flex-sb" style={{marginBottom:4}}><span style={{fontSize:15,fontWeight:600}}>🏁 Kết thúc buổi học</span><button className="btn-g btn-sm" onClick={onClose}>✕</button></div>
     <div className="tx-dm" style={{marginBottom:16}}>{session.title}</div>
+
+    {sessionConcepts.length===0&&<div style={{background:'var(--wab)',border:'1px solid var(--waBdr)',borderRadius:8,padding:'9px 11px',marginBottom:16,fontSize:11,color:'var(--wa)'}}>
+      ⚠️ Session này chưa gắn Concept nào — kết thúc sẽ <b>không</b> cập nhật % tiến độ của môn học. Nếu buổi học này thực sự phục vụ 1 Concept cụ thể, bấm ✏️ sửa Session trước khi Kết thúc để chọn Concept.
+    </div>}
 
     {sessionConcepts.length>0&&<div style={{marginBottom:16}}>
       <div className="tx-dm" style={{marginBottom:6,fontWeight:600}}>📚 Đánh giá từng Concept đã học</div>
@@ -949,13 +986,20 @@ function CourseScheduleView({course,data}){
   const startAct=new Date(Math.min(new Date(withDate[0]._date).getTime(),Date.now()));startAct.setHours(0,0,0,0);
   const endD=new Date(course.examDate||course.endDate||withDate[withDate.length-1]._date);endD.setHours(0,0,0,0);
   const totalMs=Math.max(1,endD-startAct);
-  const todayPct=Math.max(0,Math.min(100,(new Date()-startAct)/totalMs*100));
+  const now=new Date();now.setHours(0,0,0,0);
+  const todayPct=Math.max(0,Math.min(100,(now-startAct)/totalMs*100));
+  const totalD=Math.max(1,Math.round((endD-startAct)/86400000)+1);
+  const passedD=Math.min(totalD,Math.max(0,Math.round((now-startAct)/86400000)+1));
+  const leftD=Math.max(0,totalD-passedD);
   return<div className="card" style={{marginBottom:10}}>
     <div className="lbl" style={{marginBottom:6}}>📅 STUDY TIMELINE <span style={{fontWeight:400,color:'var(--dm)',fontSize:9}}>(theo Concept — sẽ chuyển sang Session ở Bước 2)</span></div>
-    <div style={{position:'relative',height:20,marginBottom:8,marginLeft:4,marginRight:60}}>
-      <div style={{position:'absolute',inset:'8px 0',background:'var(--dm)',borderRadius:2,opacity:.4}}/>
+    <TimelineRuler start={startAct} end={endD} ticks={5}/>
+    <div style={{position:'relative',height:16,marginBottom:6}}>
+      <div style={{position:'absolute',inset:'6px 0',background:'var(--dm)',borderRadius:2,opacity:.4}}/>
       <div style={{position:'absolute',left:`${todayPct}%`,top:0,bottom:0,width:2,background:'var(--acc)',borderRadius:1}}/>
-      <div style={{position:'absolute',left:`${todayPct}%`,top:-2,transform:'translateX(-50%)',background:'var(--acc)',color:'#fff',fontSize:8,fontWeight:700,borderRadius:3,padding:'1px 4px',whiteSpace:'nowrap'}}>Hôm nay</div>
+    </div>
+    <div style={{textAlign:'center',marginBottom:10,fontSize:11}}>
+      📍 Hôm nay — đã qua {passedD} ngày · còn {leftD} ngày <span style={{color:'var(--dm)'}}>(trong tổng {totalD} ngày)</span>
     </div>
     {withDate.map(c=>{
       const status=deriveConceptStatus(c,course.examDate,data);

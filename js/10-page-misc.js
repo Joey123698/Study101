@@ -596,6 +596,7 @@ function SettingsPage({data,upd}){
 
 function ParkingLotPage({data,upd}){
   const [tab,setTab]=useState('tasks');
+  const [viewMode,setViewMode]=useState('list'); // 'list' | 'kanban'
   const [showAddTask,setShowAddTask]=useState(false);
   const [showAddNote,setShowAddNote]=useState(false);
   const [editTask,setEditTask]=useState(null);
@@ -611,10 +612,16 @@ function ParkingLotPage({data,upd}){
 
   const tasks=data.parkingTasks||[];const notes=data.parkingNotes||[];const cats=data.parkingCategories||['Ý tưởng','Cần làm','Học tập','Khác'];
   const PRIORITY_META={high:{label:'Cao',color:'var(--cr)',order:0},medium:{label:'TB',color:'var(--wa)',order:1},low:{label:'Thấp',color:'var(--mu)',order:2}};
+  // v13: status (todo/doing/done) — kept in sync with the older `done` boolean
+  // so existing data (and the List view's checkbox) keeps working unchanged.
+  // Migration-safe: tasks without a status yet fall back to done?'done':'todo'.
+  const STATUS_META={todo:{label:'Chưa làm',color:'var(--mu)'},doing:{label:'Đang làm',color:'var(--in)'},done:{label:'Đã xong',color:'var(--su)'}};
+  const statusOf=(t)=>t.status||(t.done?'done':'todo');
+  const setStatus=(id,status)=>upd({parkingTasks:tasks.map(t=>t.id===id?{...t,status,done:status==='done'}:t)});
   const undone=tasks.filter(t=>!t.done).sort((a,b)=>(PRIORITY_META[a.priority||'medium'].order-PRIORITY_META[b.priority||'medium'].order));
   const done=tasks.filter(t=>t.done);
   const filtered=catFilter==='all'?undone:undone.filter(t=>t.category===catFilter);
-  const addTask=()=>{if(!taskForm.text.trim())return;upd({parkingTasks:[{id:uid(),...taskForm,done:false,date:TODAY},...tasks]});setTaskForm({text:'',category:cats[0]||'Khác',deadline:'',priority:'medium'});setShowAddTask(false);};
+  const addTask=()=>{if(!taskForm.text.trim())return;upd({parkingTasks:[{id:uid(),...taskForm,done:false,status:'todo',date:TODAY},...tasks]});setTaskForm({text:'',category:cats[0]||'Khác',deadline:'',priority:'medium'});setShowAddTask(false);};
   const updTask=(id,ch)=>upd({parkingTasks:tasks.map(t=>t.id===id?{...t,...ch}:t)});
   const delTask=id=>upd({parkingTasks:tasks.filter(t=>t.id!==id)});
   const addNote=()=>{upd({parkingNotes:[{id:uid(),...noteForm,date:TODAY},...notes]});setNoteForm({title:'',content:'',color:'#1A2038',noteType:'text',todos:[]});setShowAddNote(false);};
@@ -637,8 +644,12 @@ function ParkingLotPage({data,upd}){
 
     {tab==='tasks'&&<div>
       <div style={{display:'flex',gap:5,flexWrap:'wrap',marginBottom:10,alignItems:'center'}}>
-        {['all',...cats].map(c=><button key={c} onClick={()=>setCatFilter(c)} style={{padding:'4px 10px',borderRadius:6,border:`1px solid ${catFilter===c?'var(--acc)':'var(--bdr)'}`,background:catFilter===c?'var(--acc2)':'transparent',color:catFilter===c?'var(--acc)':'var(--mu)',cursor:'pointer',fontSize:11}}>{c==='all'?`🗂 Tất cả (${undone.length})`:c}</button>)}
+        {['all',...cats].map(c=>{const n=c==='all'?undone.length:undone.filter(t=>t.category===c).length;return<button key={c} onClick={()=>setCatFilter(c)} style={{padding:'4px 10px',borderRadius:6,border:`1px solid ${catFilter===c?'var(--acc)':'var(--bdr)'}`,background:catFilter===c?'var(--acc2)':'transparent',color:catFilter===c?'var(--acc)':'var(--mu)',cursor:'pointer',fontSize:11}}>{c==='all'?'🗂 Tất cả':c} ({n})</button>;})}
         <button className="btn-g btn-sm" onClick={()=>setShowCatMgr(s=>!s)} title="Quản lý category">⚙️</button>
+        <div style={{marginLeft:'auto',display:'flex',gap:4}}>
+          <button onClick={()=>setViewMode('list')} title="Danh sách" style={{padding:'4px 9px',borderRadius:6,border:`1px solid ${viewMode==='list'?'var(--acc)':'var(--bdr)'}`,background:viewMode==='list'?'var(--acc2)':'transparent',color:viewMode==='list'?'var(--acc)':'var(--mu)',cursor:'pointer',fontSize:12}}>☰</button>
+          <button onClick={()=>setViewMode('kanban')} title="Kanban" style={{padding:'4px 9px',borderRadius:6,border:`1px solid ${viewMode==='kanban'?'var(--acc)':'var(--bdr)'}`,background:viewMode==='kanban'?'var(--acc2)':'transparent',color:viewMode==='kanban'?'var(--acc)':'var(--mu)',cursor:'pointer',fontSize:12}}>▦</button>
+        </div>
       </div>
       {showCatMgr&&<div className="card" style={{marginBottom:10}}>
         <div className="flex-sb" style={{marginBottom:8}}><div className="lbl" style={{margin:0}}>Quản lý Categories</div><button className="btn-g btn-sm" onClick={()=>setShowCatMgr(false)}>✕</button></div>
@@ -653,6 +664,7 @@ function ParkingLotPage({data,upd}){
           <button className="btn-p btn-sm" onClick={()=>{if(newCat.trim()&&!cats.includes(newCat.trim())){upd({parkingCategories:[...cats,newCat.trim()]});setNewCat('');}}}> + </button>
         </div>
       </div>}
+      {viewMode==='list'&&<>
       {filtered.length===0&&<div style={{textAlign:'center',padding:'24px 0',color:'var(--dm)'}}><div style={{fontSize:24,marginBottom:6}}>🎉</div><div style={{fontSize:12}}>Không có task nào trong category này</div></div>}
       {filtered.map(task=>{
         const dd=task.deadline?daysTo(task.deadline):null;
@@ -674,12 +686,13 @@ function ParkingLotPage({data,upd}){
           <div style={{display:'flex',gap:5}}><button className="btn-p btn-sm" onClick={()=>{updTask(task.id,{text:editTask.text,category:editTask.category,deadline:editTask.deadline,priority:editTask.priority||'medium'});setEditTask(null);}}>Lưu</button><button className="btn-g btn-sm" onClick={()=>setEditTask(null)}>Huỷ</button></div>
         </div>;
         return<div key={task.id} className="ptask-row">
-          <div style={{width:20,height:20,borderRadius:5,border:`1.5px solid ${task.done?'var(--su)':'var(--bdr)'}`,background:task.done?'var(--su)':'transparent',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0}} onClick={()=>updTask(task.id,{done:!task.done})}>{task.done&&<span style={{color:'#fff',fontSize:10,fontWeight:700}}>✓</span>}</div>
+          <div style={{width:20,height:20,borderRadius:5,border:`1.5px solid ${task.done?'var(--su)':'var(--bdr)'}`,background:task.done?'var(--su)':'transparent',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0}} onClick={()=>setStatus(task.id,task.done?'todo':'done')}>{task.done&&<span style={{color:'#fff',fontSize:10,fontWeight:700}}>✓</span>}</div>
           <div style={{flex:1,minWidth:0}}>
             <div style={{fontSize:12,textDecoration:task.done?'line-through':'none',opacity:task.done?.6:1,whiteSpace:'normal',wordBreak:'break-word'}}>{task.text}</div>
             <div style={{display:'flex',gap:5,marginTop:1,alignItems:'center',flexWrap:'wrap'}}>
               <span style={{fontSize:9,fontWeight:700,color:PRIORITY_META[task.priority||'medium'].color}}>● {PRIORITY_META[task.priority||'medium'].label}</span>
               <span style={{fontSize:9,background:'var(--acc2)',color:'var(--acc)',borderRadius:4,padding:'1px 5px'}}>{task.category}</span>
+              {statusOf(task)==='doing'&&<span style={{fontSize:9,color:'var(--in)',fontWeight:700}}>● Đang làm</span>}
               {task.deadline&&<span style={{fontSize:9,color:dd<=0?'var(--cr)':dd<=3?'var(--wa)':'var(--dm)'}}>{dd<=0?'Quá hạn!':fmt(task.deadline)}</span>}
             </div>
           </div>
@@ -689,10 +702,33 @@ function ParkingLotPage({data,upd}){
       {done.length>0&&<div style={{marginTop:10}}>
         <button className="btn-g btn-sm" onClick={()=>setShowDone(s=>!s)} style={{marginBottom:6}}>☑️ Đã xong ({done.length}) {showDone?'▲':'▼'}</button>
         {showDone&&done.map(task=><div key={task.id} className="ptask-row" style={{opacity:.55}}>
-          <div style={{width:20,height:20,borderRadius:5,border:'1.5px solid var(--su)',background:'var(--su)',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0}} onClick={()=>updTask(task.id,{done:false})}><span style={{color:'#fff',fontSize:10,fontWeight:700}}>✓</span></div>
+          <div style={{width:20,height:20,borderRadius:5,border:'1.5px solid var(--su)',background:'var(--su)',display:'flex',alignItems:'center',justifyContent:'center',cursor:'pointer',flexShrink:0}} onClick={()=>setStatus(task.id,'todo')}><span style={{color:'#fff',fontSize:10,fontWeight:700}}>✓</span></div>
           <span style={{flex:1,fontSize:12,textDecoration:'line-through'}}>{task.text}</span>
           <button style={{background:'none',border:'none',cursor:'pointer',color:'var(--cr)',fontSize:13}} onClick={()=>delTask(task.id)}>×</button>
         </div>)}
+      </div>}
+      </>}
+
+      {viewMode==='kanban'&&<div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8}}>
+        {['todo','doing','done'].map(colStatus=>{
+          const colTasks=tasks.filter(t=>statusOf(t)===colStatus&&(catFilter==='all'||t.category===catFilter));
+          return<div key={colStatus} style={{background:'var(--sur)',borderRadius:8,padding:'8px',minHeight:80}}>
+            <div style={{fontSize:10,fontWeight:700,color:STATUS_META[colStatus].color,marginBottom:8,textAlign:'center'}}>{STATUS_META[colStatus].label} ({colTasks.length})</div>
+            {colTasks.map(task=>{const dd=task.deadline?daysTo(task.deadline):null;
+              return<div key={task.id} className="card" style={{marginBottom:6,padding:'8px 9px'}}>
+                <div style={{fontSize:11,marginBottom:4,wordBreak:'break-word'}}>{task.text}</div>
+                <div style={{display:'flex',gap:4,marginBottom:5,flexWrap:'wrap'}}>
+                  <span style={{fontSize:8,fontWeight:700,color:PRIORITY_META[task.priority||'medium'].color}}>● {PRIORITY_META[task.priority||'medium'].label}</span>
+                  {task.deadline&&<span style={{fontSize:8,color:dd<=0?'var(--cr)':'var(--dm)'}}>{dd<=0?'Quá hạn!':fmt(task.deadline)}</span>}
+                </div>
+                <div style={{display:'flex',gap:3}}>
+                  {colStatus!=='todo'&&<button onClick={()=>setStatus(task.id,colStatus==='done'?'doing':'todo')} title="Lùi lại" style={{flex:1,fontSize:10,padding:'3px',borderRadius:4,border:'1px solid var(--bdr)',background:'var(--card)',color:'var(--mu)',cursor:'pointer'}}>‹</button>}
+                  <button onClick={()=>setEditTask({...task})} style={{fontSize:10,padding:'3px 6px',borderRadius:4,border:'1px solid var(--bdr)',background:'var(--card)',color:'var(--mu)',cursor:'pointer'}}>✏️</button>
+                  {colStatus!=='done'&&<button onClick={()=>setStatus(task.id,colStatus==='todo'?'doing':'done')} title="Tiến lên" style={{flex:1,fontSize:10,padding:'3px',borderRadius:4,border:'1px solid var(--bdr)',background:'var(--card)',color:'var(--mu)',cursor:'pointer'}}>›</button>}
+                </div>
+              </div>;})}
+            {colTasks.length===0&&<div style={{textAlign:'center',fontSize:10,color:'var(--dm)',padding:'10px 0'}}>—</div>}
+          </div>;})}
       </div>}
     </div>}
 
