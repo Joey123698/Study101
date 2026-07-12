@@ -79,7 +79,7 @@ function App(){
     if(page==='uniphase')return<UniPhasePage data={data} upd={upd}/>;
     if(page==='timeline')return<TimelinePage data={data}/>;
     if(page==='journal')return<StudyJournalPage data={data} upd={upd} awardXP={awardXP}/>;
-    if(page==='courses')return<CoursesPage data={data} upd={upd} awardXP={awardXP} initCourseId={pageParams.courseId}/>;
+    if(page==='courses')return<CoursesPage data={data} upd={upd} awardXP={awardXP} initCourseId={pageParams.courseId} resetAt={pageParams.resetAt}/>;
     if(page==='language')return<LanguagePage data={data} upd={upd}/>;
     if(page==='studylog')return<StudyLogPage data={data} upd={upd}/>;
     if(page==='habits')return<HabitsPage data={data} upd={upd}/>;
@@ -113,7 +113,18 @@ function App(){
             if(p.id==='parking'){const total=(data.parkingTasks||[]).filter(t=>!t.done).length+(data.parkingNotes||[]).length;if(total>0)badge=<span className="nav-badge" style={{marginLeft:'auto',color:'var(--dm)',fontSize:10}}>{total}</span>;}
             const isCoursesExpanded=expandedNav['courses'];
             return<div key={p.id}>
-              <button className={`nav ${page===p.id?'on':''}`} onClick={()=>{nav(p.id);if(p.id==='courses'&&sbOpen)togNav('courses');}}>
+              <button className={`nav ${page===p.id?'on':''}`} onClick={()=>{
+                // v13 fix: a course-list tile click only updates CoursesPage's
+                // OWN local `sel` state (not pageParams.courseId at this level),
+                // so clicking this same nav link again could pass the exact same
+                // (unchanged) params — nothing for CoursesPage to react to, so it
+                // silently stayed on the course detail. Sending a fresh resetAt
+                // timestamp guarantees CoursesPage always sees *something* new
+                // to reset on, regardless of whether courseId itself changed.
+                if(p.id==='courses')nav('courses',{resetAt:Date.now()});
+                else nav(p.id);
+                if(p.id==='courses'&&sbOpen)togNav('courses');
+              }}>
                 <span style={{fontSize:14,width:18,textAlign:'center',flexShrink:0}}>{p.emoji}</span>
                 <span className="sb-label">{p.label}</span>{badge}
                 {p.id==='courses'&&sbOpen&&activeCourses.length>0&&<span style={{marginLeft:'auto',fontSize:10,color:'var(--dm)',opacity:.6}}>{isCoursesExpanded?'▲':'▼'}</span>}

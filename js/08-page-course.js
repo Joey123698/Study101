@@ -219,15 +219,16 @@ function CoursePhaseGantt({course,onUpdate,data}){
     </>}
     <div style={{position:'relative'}}>
       {coursePhases.map(p=>{
+        const linkedChapterCount=(course.chapters||[]).filter(ch=>ch.coursePhaseId===p.id).length;
         const prog=phaseProgress(p,course.chapters||[],course.concepts||[],data);
         const timing=phaseTiming(p);
         const ts=TIMING_STYLE[timing];
         return<div key={p.id} className="gantt2-row">
           <div className="gantt2-label" onClick={()=>{setEditId(p.id);setF({title:p.title,startDate:p.startDate||TODAY,endDate:p.endDate||TODAY});setShowAdd(true);}} style={{cursor:'pointer',color:ts.text,opacity:timing==='past'?.7:1}} title="Click để sửa">{p.title}</div>
           <div className="gantt2-track" style={{position:'relative'}}>
-            <div className="gantt2-bar" style={{left:`${pOf(p.startDate)}%`,width:`${wOf(p.startDate,p.endDate)}%`,background:ts.bar,opacity:ts.opacity,boxShadow:ts.glow,position:'relative',overflow:'hidden',transition:'box-shadow .2s'}} title={`${fmt(p.startDate)} → ${fmt(p.endDate)} · ${dayCount(p)} ngày · ${prog}% mastery${timing==='current'?' · ĐANG Ở PHASE NÀY':timing==='past'?' · Đã qua':' · Sắp tới'}`}>
-              <div style={{position:'absolute',inset:0,background:'rgba(0,0,0,.35)',width:`${100-prog}%`,right:0,left:'auto'}}/>
-              <span style={{position:'relative'}}>{p.title} · {dayCount(p)}N · {prog}%</span>
+            <div className="gantt2-bar" style={{left:`${pOf(p.startDate)}%`,width:`${wOf(p.startDate,p.endDate)}%`,background:linkedChapterCount===0?'var(--dm)':ts.bar,opacity:linkedChapterCount===0?.35:ts.opacity,boxShadow:ts.glow,position:'relative',overflow:'hidden',transition:'box-shadow .2s'}} title={linkedChapterCount===0?'Chưa có Chapter nào gắn vào Phase này — % sẽ luôn là 0% cho tới khi bạn gắn ít nhất 1 Chapter':`${fmt(p.startDate)} → ${fmt(p.endDate)} · ${dayCount(p)} ngày · ${prog}% mastery${timing==='current'?' · ĐANG Ở PHASE NÀY':timing==='past'?' · Đã qua':' · Sắp tới'}`}>
+              {linkedChapterCount>0&&<div style={{position:'absolute',inset:0,background:'rgba(0,0,0,.35)',width:`${100-prog}%`,right:0,left:'auto'}}/>}
+              <span style={{position:'relative'}}>{linkedChapterCount===0?`${p.title} · ⚠️ chưa có Chapter nào gắn`:`${p.title} · ${dayCount(p)}N · ${prog}%`}</span>
             </div>
             {/* "Today" marker — placed in the SAME %-based coordinate system as the
                bar above (pOf), inside each track individually. Safer than one
@@ -369,6 +370,72 @@ function markReviewed(course,session,onUpdateCourse){
 
 /* ── Session blueprint editor: title, duration, objectives (lightweight + expandable
    detail), concepts covered, resources, custom todos. ── */
+/* ── v13: Import nhiều Session cùng lúc từ 1 khối text — dán từ ChatGPT hoặc
+   ghi chú riêng, mỗi Session cách nhau bởi dòng bắt đầu "###". Trong mỗi
+   khối, các dòng "Key: value" khai báo field tương ứng:
+     Objective: <text>      — thêm 1 Learning Objective
+     Todo: <text>           — thêm 1 việc vào checklist
+     Link: <text/url>       — thêm 1 Resource
+     Concept: <tên concept> — khớp theo TÊN với Concept đã có trong môn (không
+                              phân biệt hoa/thường); không khớp được thì bỏ qua
+     Duration: <số phút>    — estimatedDuration, mặc định 30 nếu bỏ trống
+   Mọi Session tạo ra đều ở trạng thái 'planned' — không tự Start, người dùng
+   xem lại rồi bấm Bắt đầu như bình thường. ── */
+function parseSessionImportTemplate(text,concepts){
+  const blocks=text.split(/^###\s*/m).map(b=>b.trim()).filter(Boolean);
+  return blocks.map(block=>{
+    const lines=block.split('\n').map(l=>l.trim()).filter(Boolean);
+    const title=lines[0]||'Session không tên';
+    const objectives=[],customTodos=[],resources=[],conceptIds=[],unmatchedConcepts=[];
+    let estimatedDuration=30;
+    for(let i=1;i<lines.length;i++){
+      const m=lines[i].match(/^(Objective|Todo|Link|Concept|Duration)\s*:\s*(.+)$/i);
+      if(!m)continue;
+      const key=m[1].toLowerCase(),val=m[2].trim();
+      if(key==='objective')objectives.push({id:uid(),text:val,description:'',expectedOutcome:'',conceptIds:[],estimatedTime:'',assessmentCriteria:''});
+      else if(key==='todo')customTodos.push({id:uid(),text:val,done:false});
+      else if(key==='link')resources.push({id:uid(),text:val});
+      else if(key==='concept'){
+        const match=concepts.find(c=>c.title.toLowerCase()===val.toLowerCase());
+        if(match)conceptIds.push(match.id);else unmatchedConcepts.push(val);
+      }
+      else if(key==='duration')estimatedDuration=Math.max(1,parseInt(val)||30);
+    }
+    return{title,estimatedDuration,objectives,conceptIds,resources,customTodos,unmatchedConcepts};
+  });
+}
+
+function BulkImportSessionsModal({concepts,onSave,onClose}){
+  const [text,setText]=useState('');
+  const parsed=text.trim()?parseSessionImportTemplate(text,concepts):[];
+  const allUnmatched=[...new Set(parsed.flatMap(p=>p.unmatchedConcepts))];
+  const save=()=>{
+    if(parsed.length===0)return;
+    onSave(parsed.map(p=>({id:uid(),title:p.title,estimatedDuration:p.estimatedDuration,objectives:p.objectives,conceptIds:p.conceptIds,resources:p.resources,customTodos:p.customTodos,status:'planned',activeStartedAt:null,accumulatedSeconds:0,activeJournalEntryId:null,createdAt:Date.now()})));
+  };
+  const example=`### Chuẩn bị script\nObjective: Viết xong script thuyết trình\nTodo: Outline nội dung\nTodo: Viết draft đầu tiên\nLink: https://docs.google.com/...\nConcept: Thuyết trình\nDuration: 45\n\n### Rehearse lần 1\nTodo: Tự tập nói 1 mình\nTodo: Quay video xem lại\nDuration: 30`;
+  return<div className="ov" onClick={onClose}><div className="modal" style={{maxWidth:480,maxHeight:'85vh',overflowY:'auto'}} onClick={e=>e.stopPropagation()}>
+    <div className="flex-sb" style={{marginBottom:10}}><span style={{fontSize:14,fontWeight:600}}>📥 Import nhiều Session</span><button className="btn-g btn-sm" onClick={onClose}>✕</button></div>
+    <div className="tx-dm" style={{marginBottom:6}}>Mỗi Session bắt đầu bằng dòng <code>###</code> + tên. Bên dưới khai báo <code>Objective:</code>, <code>Todo:</code>, <code>Link:</code>, <code>Concept:</code> (khớp tên Concept có sẵn), <code>Duration:</code> (phút) — dòng nào cũng tuỳ chọn, dán nhiều dòng cùng loại để thêm nhiều mục.</div>
+    <textarea value={text} onChange={e=>setText(e.target.value)} rows={9} placeholder={example}
+      style={{width:'100%',background:'var(--sur)',border:'1px solid var(--bdr)',borderRadius:8,padding:'8px 10px',color:'var(--tx)',fontSize:11,outline:'none',fontFamily:'monospace',resize:'vertical',boxSizing:'border-box',marginBottom:10}} autoFocus/>
+    {parsed.length>0&&<div style={{marginBottom:10}}>
+      <div className="tx-dm" style={{marginBottom:5,fontWeight:600}}>Xem trước ({parsed.length} Session):</div>
+      {parsed.map((p,i)=><div key={i} style={{fontSize:11,background:'var(--sur)',borderRadius:6,padding:'6px 9px',marginBottom:4}}>
+        <b>{p.title}</b> · {p.estimatedDuration}′
+        {p.objectives.length>0&&<span> · {p.objectives.length} objective</span>}
+        {p.customTodos.length>0&&<span> · {p.customTodos.length} todo</span>}
+        {p.resources.length>0&&<span> · {p.resources.length} link</span>}
+        {p.conceptIds.length>0&&<span> · 🔗{p.conceptIds.length} concept</span>}
+      </div>)}
+      {allUnmatched.length>0&&<div style={{fontSize:10,color:'var(--wa)',marginTop:4}}>⚠️ Không khớp được Concept: {allUnmatched.join(', ')} — kiểm tra đúng tên chưa (không phân biệt hoa/thường, nhưng phải khớp chính xác).</div>}
+    </div>}
+    <div style={{display:'flex',gap:8}}>
+      <button className="btn-p" style={{flex:1,justifyContent:'center',opacity:parsed.length===0?.5:1}} disabled={parsed.length===0} onClick={save}>+ Tạo {parsed.length>0?parsed.length+' ':''}Session</button>
+      <button className="btn-g" onClick={onClose}>Huỷ</button>
+    </div>
+  </div></div>;}
+
 function SessionEditorModal({session,concepts,onSave,onClose}){
   const [f,setF]=useState(session?{
     title:session.title,estimatedDuration:session.estimatedDuration||30,
@@ -700,6 +767,7 @@ function SessionLibraryBlock({course,data,upd,awardXP,onUpdate}){
   const [editSession,setEditSession]=useState(null);
   const [showQuick,setShowQuick]=useState(false);
   const [quickTitle,setQuickTitle]=useState('');
+  const [showBulkImport,setShowBulkImport]=useState(false);
   const [nextQueue,setNextQueue]=useState(null); // {deltas, simulatedData} — set right after Finish
   const sessions=course.sessions||[];
   const legacy=course.legacyLearningObjectives||[];
@@ -743,9 +811,14 @@ function SessionLibraryBlock({course,data,upd,awardXP,onUpdate}){
       <div className="lbl" style={{margin:0}}>🎯 CURRENT SESSION</div>
       <div style={{display:'flex',gap:6}}>
         <button className="btn-g btn-sm" onClick={()=>setShowQuick(s=>!s)}>⚡ Quick Session</button>
+        <button className="btn-g btn-sm" onClick={()=>setShowBulkImport(true)}>📥 Import nhiều</button>
         <button className="btn-g btn-sm" onClick={()=>setShowEditor(true)}>+ Session mới</button>
       </div>
     </div>
+
+    {showBulkImport&&<BulkImportSessionsModal concepts={course.concepts||[]}
+      onSave={(newSessions)=>{onUpdate({sessions:[...sessions,...newSessions]});setShowBulkImport(false);}}
+      onClose={()=>setShowBulkImport(false)}/>}
 
     {showQuick&&<div className="card" style={{marginBottom:10,display:'flex',gap:6}}>
       <input className="inp" autoFocus value={quickTitle} onChange={e=>setQuickTitle(e.target.value)} placeholder="Tên nhanh, vd: Ôn lại bài cũ..." style={{flex:1}} onKeyDown={e=>e.key==='Enter'&&startQuick()}/>
@@ -819,6 +892,7 @@ function ConceptTouchModal({concept,color,onSave,onClose}){
 /* ── Concept row: mastery bar + status + review priority + touch + history sparkline ── */
 function ConceptRow({concept,color,examDate,data,course,upd,onTouch,onEdit,onDelete}){
   const [showHistory,setShowHistory]=useState(false);
+  const [showSessions,setShowSessions]=useState(false);
   const touches=concept.touches||[];
   const isTask=concept.targetTouches>0;
   const mastery=calcProgress(concept,data);
@@ -828,14 +902,21 @@ function ConceptRow({concept,color,examDate,data,course,upd,onTouch,onEdit,onDel
   const rpMeta=REVIEW_PRIORITY_META[reviewPriority];
   const conf=latestConfidence(touches);
   const history=[...touches].sort((a,b)=>a.timestamp-b.timestamp);
+  // v13: every Session that lists this Concept in its conceptIds — lets you
+  // jump straight from "what am I studying" (Concept) to "which Session
+  // covers it" (per user's request: click a Concept, see its Sessions, pick
+  // one to start) instead of hunting through the Session list separately.
+  const linkedSessions=(course?.sessions||[]).filter(s=>(s.conceptIds||[]).includes(concept.id));
+  const onUpdateCourseLocal=course&&upd?(ch)=>upd({courses:data.courses.map(c=>c.id===course.id?{...c,...ch}:c)}):null;
   return<div style={{padding:'8px 0',borderBottom:'1px solid var(--bdr)'}}>
     <div style={{display:'flex',alignItems:'center',gap:8}}>
       <span style={{fontSize:13,flexShrink:0}}>{meta.emoji}</span>
       <div style={{flex:1,minWidth:0}}>
-        <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:3}}>
+        <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:3,cursor:linkedSessions.length>0?'pointer':'default'}} onClick={()=>linkedSessions.length>0&&setShowSessions(s=>!s)}>
           <span style={{fontSize:12,fontWeight:500}}>{concept.title}</span>
           {conf>0&&<span style={{fontSize:9,color:'var(--dm)'}}>{'⭐'.repeat(conf)}</span>}
           {reviewPriority!=='None'&&reviewPriority!=='Low'&&<span title={rpMeta.label} style={{fontSize:9,background:rpMeta.color+'22',color:rpMeta.color,borderRadius:4,padding:'1px 5px',fontWeight:700}}>{rpMeta.emoji} {rpMeta.label}</span>}
+          {linkedSessions.length>0&&<span style={{fontSize:9,color:'var(--acc)',background:'var(--acc2)',borderRadius:4,padding:'1px 5px'}}>🔗 {linkedSessions.length} session {showSessions?'▲':'▼'}</span>}
         </div>
         <div style={{display:'flex',alignItems:'center',gap:6}}>
           <div style={{flex:1}}><Bar v={mastery} color={meta.color}/></div>
@@ -850,6 +931,17 @@ function ConceptRow({concept,color,examDate,data,course,upd,onTouch,onEdit,onDel
       <button onClick={onEdit} style={{background:'none',border:'none',cursor:'pointer',color:'var(--dm)',fontSize:11,opacity:.5}}>✏️</button>
       <button onClick={onDelete} style={{background:'none',border:'none',cursor:'pointer',color:'var(--dm)',fontSize:13,opacity:.35}}>×</button>
     </div>
+    {showSessions&&linkedSessions.length>0&&<div style={{marginTop:8,marginLeft:21,background:'var(--sur)',borderRadius:7,padding:'8px'}}>
+      {linkedSessions.map(s=>{
+        const smeta=SESSION_STATUS_META[s.status]||{};
+        const isPaused=s.status==='in_progress'&&!s.activeStartedAt;
+        return<div key={s.id} style={{display:'flex',alignItems:'center',gap:6,padding:'4px 0'}}>
+          <span style={{fontSize:11,flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{s.title}</span>
+          <span style={{fontSize:9,color:'var(--dm)'}}>{isPaused?'Đã tạm dừng':smeta.label}</span>
+          {s.status==='planned'&&onUpdateCourseLocal&&<button className="btn-p btn-sm" onClick={()=>startSession(course,s,onUpdateCourseLocal,upd,data)}>▶ Bắt đầu</button>}
+          {isPaused&&onUpdateCourseLocal&&<button className="btn-p btn-sm" onClick={()=>resumeSession(course,s,onUpdateCourseLocal,upd,data)}>▶ Tiếp tục</button>}
+        </div>;})}
+    </div>}
     {showHistory&&history.length>1&&<div style={{marginTop:8,marginLeft:21,background:'var(--sur)',borderRadius:7,padding:'8px'}}>
       <div style={{display:'flex',alignItems:'flex-end',gap:3,height:40}}>
         {history.map((t,i)=>{
@@ -900,10 +992,16 @@ function ChapterBlock({chapter,concepts,examDate,color,data,course,upd,onAddConc
   const [showBulk,setShowBulk]=useState(false);
   const chConcepts=concepts.filter(c=>c.chapterId===chapter.id);
   const prog=chapterProgress(chapter,concepts,data);
-  return<div className="card" style={{marginBottom:8,padding:'11px 14px'}}>
+  // v13: a Chapter created before any coursePhase existed defaults to
+  // coursePhaseId:'' and silently never counts toward Phase/Course progress
+  // (found via a real bug report — Concepts showed correct %, Phase stayed
+  // at 0%). Surface it right here so it's visible without opening the editor.
+  const isOrphanChapter=!chapter.coursePhaseId||!(course.coursePhases||[]).some(p=>p.id===chapter.coursePhaseId);
+  return<div className="card" style={{marginBottom:8,padding:'11px 14px',border:isOrphanChapter?'1px solid var(--waBdr)':undefined}}>
     <div style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer'}} onClick={()=>setExpanded(e=>!e)}>
       <span style={{fontSize:11,color:'var(--dm)'}}>{expanded?'▼':'▶'}</span>
       <span style={{fontSize:13,fontWeight:700,flex:1}}>{chapter.title}</span>
+      {isOrphanChapter&&<span title="Chưa gắn Phase nào — % sẽ không tính vào Phase/môn học" style={{fontSize:9,color:'var(--wa)',background:'var(--wab)',border:'1px solid var(--waBdr)',borderRadius:4,padding:'1px 6px',fontWeight:700}}>⚠️ Chưa gắn Phase</span>}
       <div style={{width:60}}><Bar v={prog} color={color}/></div>
       <span style={{fontSize:11,fontWeight:700,color,minWidth:32,textAlign:'right'}}>{prog}%</span>
       <span className="tx-dm" style={{minWidth:50,textAlign:'right'}}>{chConcepts.length} concept</span>
@@ -925,7 +1023,9 @@ function ChapterBlock({chapter,concepts,examDate,color,data,course,upd,onAddConc
 
 /* ── Chapter editor (lightweight — title + which Phase it belongs to) ── */
 function ChapterEditorModal({chapter,coursePhases,onSave,onClose}){
-  const [f,setF]=useState(chapter?{title:chapter.title,coursePhaseId:chapter.coursePhaseId}:{title:'',coursePhaseId:coursePhases[0]?.id||''});
+  const [f,setF]=useState(chapter?{title:chapter.title,coursePhaseId:chapter.coursePhaseId||''}:{title:'',coursePhaseId:coursePhases[0]?.id||''});
+  const isOrphan=f.coursePhaseId&&!coursePhases.some(p=>p.id===f.coursePhaseId);
+  const isUnset=!f.coursePhaseId;
   const save=()=>{if(!f.title.trim())return;onSave(chapter?{...chapter,...f}:{id:uid(),...f});};
   return<div className="ov" onClick={onClose}><div className="modal" style={{maxWidth:360}} onClick={e=>e.stopPropagation()}>
     <div className="flex-sb" style={{marginBottom:12}}><span style={{fontSize:14,fontWeight:500}}>{chapter?'✏️ Sửa Chapter':'+ Chapter mới'}</span><button className="btn-g btn-sm" onClick={onClose}>✕</button></div>
@@ -933,9 +1033,16 @@ function ChapterEditorModal({chapter,coursePhases,onSave,onClose}){
     <input className="inp" value={f.title} onChange={e=>setF(p=>({...p,title:e.target.value}))} placeholder="VD: Binary Choice Models..." style={{marginBottom:10}} autoFocus/>
     {coursePhases.length>0&&<div>
       <div className="tx-dm" style={{marginBottom:2}}>Thuộc Phase</div>
-      <select className="sel" value={f.coursePhaseId} onChange={e=>setF(p=>({...p,coursePhaseId:e.target.value}))} style={{marginBottom:14}}>
+      {/* v13: explicit placeholder option — without this, a Chapter whose
+         coursePhaseId doesn't match any real Phase (orphaned, e.g. created
+         before any Phase existed) would have the browser silently render the
+         FIRST option as if selected, hiding the mismatch. Now it shows
+         clearly as unset until you actually pick one. */}
+      <select className="sel" value={f.coursePhaseId} onChange={e=>setF(p=>({...p,coursePhaseId:e.target.value}))} style={{marginBottom:isUnset||isOrphan?6:14}}>
+        {(isUnset||isOrphan)&&<option value="">— Chưa gắn Phase nào, chọn 1 cái —</option>}
         {coursePhases.map(p=><option key={p.id} value={p.id}>{p.title}</option>)}
       </select>
+      {(isUnset||isOrphan)&&<div style={{fontSize:10,color:'var(--wa)',marginBottom:14}}>⚠️ Chapter này chưa gắn Phase nào — % tiến độ của Phase/môn học sẽ không tính các Concept trong Chapter này cho tới khi bạn chọn 1 Phase và bấm Lưu.</div>}
     </div>}
     <div style={{display:'flex',gap:8}}><button className="btn-p" style={{flex:1,justifyContent:'center'}} onClick={save}>Lưu</button><button className="btn-g" onClick={onClose}>Huỷ</button></div>
   </div></div>;}
@@ -975,6 +1082,60 @@ function KnowledgeNotesBlock({course,onUpdate}){
    date ever isn't zero-padded ISO) + show undated Concepts in their own group
    instead of silently hiding them (was making the dated ones look "out of
    order" since the sequence had invisible gaps). ── */
+const DAY_PX=15;
+
+/* ── Shared month+day calendar header for the day-strip timeline, horizontally
+   scrollable alongside the concept rows below it. ── */
+function CalendarDayHeader({days}){
+  const monthGroups=[];
+  days.forEach(d=>{
+    const key=`${d.getFullYear()}-${d.getMonth()}`;
+    const last=monthGroups[monthGroups.length-1];
+    if(last&&last.key===key)last.count++;
+    else monthGroups.push({key,count:1,label:MV[d.getMonth()]});
+  });
+  return<div style={{position:'sticky',top:0,background:'var(--card)',zIndex:1}}>
+    <div style={{display:'flex'}}>
+      {monthGroups.map((m,i)=><div key={i} style={{width:m.count*DAY_PX,textAlign:'center',fontSize:9,fontWeight:700,color:'var(--mu)',borderBottom:'1px solid var(--bdr)',paddingBottom:2,whiteSpace:'nowrap',overflow:'hidden'}}>{m.label}</div>)}
+    </div>
+    <div style={{display:'flex',marginBottom:4}}>
+      {days.map((d,i)=><div key={i} style={{width:DAY_PX,textAlign:'center',fontSize:8,color:d.getDay()===0||d.getDay()===6?'#9B7FE0':'var(--dm)'}}>{d.getDate()}</div>)}
+    </div>
+  </div>;}
+
+/* ── One Concept's day-by-day strip. Color rules (priority order):
+   1. Today → green.  2. Weekend → purple (readability aid, applies everywhere).
+   3. Past (before today) → gray.  4. Inside THIS concept's own inferred window
+   → blue if the window has already started (today ≥ windowStart), else
+   yellow (window is still fully in the future). 5. Anything else (future,
+   outside this concept's window) → empty/dim, not this row's business.
+
+   v13 caveat, stated plainly: Concepts only ever had a single `targetDate`
+   (deadline), never a start date. Rather than block on adding a new field,
+   "windowStart" here is INFERRED as the previous concept's targetDate + 1
+   day (chronological chain) — a reasonable approximation, not a true
+   authored start date. If this doesn't feel right in practice, the real
+   fix is adding an explicit start date per Concept — flagged, not silently
+   assumed to be good enough forever. ── */
+function ConceptDayStripRow({concept,days,windowStart,windowEnd,today}){
+  const targetDate=new Date(concept._date);targetDate.setHours(0,0,0,0);
+  return<div style={{display:'flex'}}>
+    {days.map((d,i)=>{
+      const isToday=d.getTime()===today.getTime();
+      const isWeekend=d.getDay()===0||d.getDay()===6;
+      const isPast=d<today;
+      const inWindow=windowStart&&windowEnd&&d>=windowStart&&d<=windowEnd;
+      const windowActive=windowStart&&today>=windowStart;
+      const isTarget=d.getTime()===targetDate.getTime();
+      let bg='transparent',border='1px solid var(--bdr)';
+      if(isToday){bg='var(--su)';border='1px solid var(--su)';}
+      else if(isWeekend){bg='#7C5CBF55';border='1px solid #7C5CBF88';}
+      else if(isPast){bg='var(--dm)';border='1px solid var(--dm)';}
+      else if(inWindow){bg=windowActive?'var(--in)':'var(--go)';border=`1px solid ${windowActive?'var(--in)':'var(--go)'}`;}
+      return<div key={i} title={fmtL(d)} style={{width:DAY_PX,height:14,boxSizing:'border-box',background:bg,border:isTarget?'2px solid var(--cr)':border,flexShrink:0}}/>;
+    })}
+  </div>;}
+
 function CourseScheduleView({course,data}){
   const withDate=(course.concepts||[]).filter(c=>c.targetDate||c.legacyDueDate).map(c=>({...c,_date:c.targetDate||c.legacyDueDate})).sort((a,b)=>new Date(a._date)-new Date(b._date));
   const noDate=(course.concepts||[]).filter(c=>!c.targetDate&&!c.legacyDueDate);
@@ -983,33 +1144,64 @@ function CourseScheduleView({course,data}){
     <div className="lbl" style={{marginBottom:6}}>📅 STUDY TIMELINE</div>
     <div className="tx-dm">Chưa có Concept nào đặt ngày mục tiêu — xem "Chưa có ngày" bên dưới hoặc thêm ngày ở mỗi Concept.</div>
   </div>;
-  const startAct=new Date(Math.min(new Date(withDate[0]._date).getTime(),Date.now()));startAct.setHours(0,0,0,0);
-  const endD=new Date(course.examDate||course.endDate||withDate[withDate.length-1]._date);endD.setHours(0,0,0,0);
-  const totalMs=Math.max(1,endD-startAct);
+
   const now=new Date();now.setHours(0,0,0,0);
-  const todayPct=Math.max(0,Math.min(100,(now-startAct)/totalMs*100));
+  const startAct=new Date(Math.min(new Date(withDate[0]._date).getTime(),now.getTime()));startAct.setHours(0,0,0,0);
+  const endD=new Date(course.examDate||course.endDate||withDate[withDate.length-1]._date);endD.setHours(0,0,0,0);
   const totalD=Math.max(1,Math.round((endD-startAct)/86400000)+1);
   const passedD=Math.min(totalD,Math.max(0,Math.round((now-startAct)/86400000)+1));
   const leftD=Math.max(0,totalD-passedD);
+
+  // Chronological window inference (see ConceptDayStripRow's comment) — must
+  // use the DATE-sorted list, before any status-based reordering for display.
+  const windows={};
+  withDate.forEach((c,i)=>{
+    const wEnd=new Date(c._date);wEnd.setHours(0,0,0,0);
+    const wStart=i===0?startAct:(()=>{const d=new Date(withDate[i-1]._date);d.setHours(0,0,0,0);d.setDate(d.getDate()+1);return d;})();
+    windows[c.id]={windowStart:wStart,windowEnd:wEnd};
+  });
+
+  // Display order: đang học (top) → chưa học (giữa) → đã xong (dưới cùng),
+  // date-order preserved within each tier since withDate is already sorted
+  // and .filter() preserves relative order.
+  const inProgress=withDate.filter(c=>{const p=calcProgress(c,data);return p>0&&p<100;});
+  const notStarted=withDate.filter(c=>(c.touches||[]).length===0);
+  const doneConcepts=withDate.filter(c=>calcProgress(c,data)>=100);
+  const ordered=[...inProgress,...notStarted,...doneConcepts];
+
+  const days=[];{let cur=new Date(startAct);while(cur<=endD){days.push(new Date(cur));cur=new Date(cur.getTime()+86400000);}}
+  const stripWidth=days.length*DAY_PX;
+
   return<div className="card" style={{marginBottom:10}}>
     <div className="lbl" style={{marginBottom:6}}>📅 STUDY TIMELINE <span style={{fontWeight:400,color:'var(--dm)',fontSize:9}}>(theo Concept — sẽ chuyển sang Session ở Bước 2)</span></div>
-    <TimelineRuler start={startAct} end={endD} ticks={5}/>
-    <div style={{position:'relative',height:16,marginBottom:6}}>
-      <div style={{position:'absolute',inset:'6px 0',background:'var(--dm)',borderRadius:2,opacity:.4}}/>
-      <div style={{position:'absolute',left:`${todayPct}%`,top:0,bottom:0,width:2,background:'var(--acc)',borderRadius:1}}/>
-    </div>
-    <div style={{textAlign:'center',marginBottom:10,fontSize:11}}>
+    <div style={{textAlign:'center',marginBottom:8,fontSize:11}}>
       📍 Hôm nay — đã qua {passedD} ngày · còn {leftD} ngày <span style={{color:'var(--dm)'}}>(trong tổng {totalD} ngày)</span>
     </div>
-    {withDate.map(c=>{
-      const status=deriveConceptStatus(c,course.examDate,data);
-      const meta=STATUS_META[status];
-      const days=daysTo(c._date);
-      return<div key={c.id} style={{display:'flex',alignItems:'center',gap:8,padding:'4px 0'}}>
-        <span style={{fontSize:12}}>{meta.emoji}</span>
-        <span style={{fontSize:11,flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{c.title}</span>
-        <span style={{fontSize:10,color:meta.color,fontWeight:600,whiteSpace:'nowrap'}}>{days<=0?`${Math.abs(days)}N trước`:`còn ${days}N`}</span>
-      </div>;})}
+    <div style={{display:'flex',gap:8,marginBottom:6,fontSize:9,color:'var(--mu)',flexWrap:'wrap'}}>
+      <span><span style={{display:'inline-block',width:9,height:9,background:'var(--dm)',marginRight:3,verticalAlign:'middle'}}/>Đã qua</span>
+      <span><span style={{display:'inline-block',width:9,height:9,background:'var(--su)',marginRight:3,verticalAlign:'middle'}}/>Hôm nay</span>
+      <span><span style={{display:'inline-block',width:9,height:9,background:'var(--in)',marginRight:3,verticalAlign:'middle'}}/>Đang trong giai đoạn</span>
+      <span><span style={{display:'inline-block',width:9,height:9,background:'var(--go)',marginRight:3,verticalAlign:'middle'}}/>Sắp tới</span>
+      <span><span style={{display:'inline-block',width:9,height:9,background:'#7C5CBF88',marginRight:3,verticalAlign:'middle'}}/>Cuối tuần</span>
+      <span><span style={{display:'inline-block',width:9,height:9,border:'2px solid var(--cr)',marginRight:3,verticalAlign:'middle'}}/>Deadline</span>
+    </div>
+    <div style={{overflowX:'auto',paddingBottom:4}}>
+      <div style={{width:Math.max(stripWidth,200),marginLeft:140}}>
+        <CalendarDayHeader days={days}/>
+      </div>
+      {ordered.map(c=>{
+        const status=deriveConceptStatus(c,course.examDate,data);
+        const meta=STATUS_META[status];
+        const{windowStart,windowEnd}=windows[c.id];
+        const days2=daysTo(c._date);
+        return<div key={c.id} style={{display:'flex',alignItems:'center',marginBottom:3}}>
+          <div style={{width:140,flexShrink:0,paddingRight:8,overflow:'hidden'}}>
+            <div style={{fontSize:10,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{meta.emoji} {c.title}</div>
+            <div style={{fontSize:8,color:meta.color}}>{days2<=0?`${Math.abs(days2)}N trước`:`còn ${days2}N`}</div>
+          </div>
+          <ConceptDayStripRow concept={c} days={days} windowStart={windowStart} windowEnd={windowEnd} today={now}/>
+        </div>;})}
+    </div>
     {noDate.length>0&&<div style={{marginTop:8,paddingTop:8,borderTop:'1px solid var(--bdr)'}}>
       <div className="tx-dm" style={{marginBottom:4}}>Chưa có ngày mục tiêu ({noDate.length}):</div>
       <div style={{display:'flex',flexWrap:'wrap',gap:5}}>
@@ -1115,11 +1307,18 @@ function CourseDetail({course,data,upd,awardXP,onBack,onUpdate,onDelete}){
   </div>;}
 
 /* ── Courses list page (wrapper — mostly unchanged) ── */
-function CoursesPage({data,upd,awardXP,initCourseId}){
+function CoursesPage({data,upd,awardXP,initCourseId,resetAt}){
   const [sel,setSel]=useState(initCourseId||null);
   const [showEditor,setShowEditor]=useState(false);
   const [showArchived,setShowArchived]=useState(false);
-  useEffect(()=>{if(initCourseId)setSel(initCourseId);},[initCourseId]);
+  // v13 fix: previously only synced when initCourseId was truthy, so clicking
+  // the sidebar "Môn học" link while deep in a Course Detail did nothing —
+  // `sel` stayed stuck (a list-tile click only updates this LOCAL `sel`, it
+  // never told the parent, so initCourseId often hadn't actually "changed"
+  // from the parent's point of view either). `resetAt` is a fresh timestamp
+  // sent by that specific nav click, guaranteeing this effect always has
+  // something new to react to and reliably snaps back to the list.
+  useEffect(()=>{setSel(initCourseId||null);},[initCourseId,resetAt]);
   const course=data.courses.find(c=>c.id===sel);
   const updCourse=(ch)=>upd({courses:data.courses.map(c=>c.id===sel?{...c,...ch}:c)});
   const delCourse=()=>{upd({courses:data.courses.filter(c=>c.id!==sel)});setSel(null);};
