@@ -128,7 +128,7 @@ function migrateToV12(d){
       const finalSecNames=secNames.length?secNames:['Chưa phân loại'];
       const coursePhaseId='cp_'+course.id+'_legacy';
       const coursePhases=[{id:coursePhaseId,title:'📥 Nhập từ hệ thống cũ',startDate:'',endDate:course.examDate||course.endDate||'',order:0}];
-      const chapters=finalSecNames.map((name,i)=>({id:'ch_'+course.id+'_'+i,coursePhaseId,title:name}));
+      const chapters=finalSecNames.map((name,i)=>({id:'ch_'+course.id+'_'+i,coursePhaseIds:[coursePhaseId],title:name}));
       const chapterByName={};chapters.forEach(ch=>{chapterByName[ch.title]=ch.id;});
       const fallbackChapterId=chapterByName['Chưa phân loại']||chapters[0]?.id;
       const concepts=oldTopics.map((t,i)=>{
@@ -159,6 +159,19 @@ function migrateToV12(d){
     if(course.learningObjectives&&!course.legacyLearningObjectives){
       course={...course,legacyLearningObjectives:course.learningObjectives,learningObjectives:undefined};
     }
+
+    // 2d. Chapter↔Phase relationship: singular coursePhaseId → plural coursePhaseIds
+    //     (many-to-many, per user's explicit request — a Chapter may belong to
+    //     more than one Phase, and a Phase may contain Chapters shared with
+    //     others; forcing 1 Chapter = 1 Phase didn't fit courses where the
+    //     Phase/Chapter counts just don't line up 1:1). Old singular id
+    //     becomes a 1-item array — coursePhaseId itself is left in place
+    //     (harmless leftover) rather than deleted; every internal reader now
+    //     uses coursePhaseIds exclusively.
+    if(course.chapters&&course.chapters.some(ch=>!ch.coursePhaseIds)){
+      course={...course,chapters:course.chapters.map(ch=>ch.coursePhaseIds?ch:{...ch,coursePhaseIds:ch.coursePhaseId?[ch.coursePhaseId]:[]})};
+    }
+
     if(!course.sessions)course={...course,sessions:[]}; // Session blueprints — Bước 2 builds the editor UI
 
     return course;
@@ -199,7 +212,7 @@ currentUniPhaseId:1,
 courses:[
   {id:'micro',name:'Microeconometrics',emoji:'📊',color:'#E24B4A',risk:'critical',schedule:'Thứ 4, 8:00–12:00',examDate:'2026-07-22',endDate:'2026-07-20',nextAction:'Xem MLE từ đầu → Binary Models',note:'Thi 22/7 — HIGHEST PRIORITY. Kiến thức gần như trống. Crash study ngay!',archived:false,ects:6,grade:null,notes:[],instructor:'',contact:'',location:'',sections:[],attendance:{},
     coursePhases:[{id:'cp_micro_a',title:'Part A',startDate:'',endDate:'2026-07-08',order:0},{id:'cp_micro_b',title:'Part B',startDate:'',endDate:'2026-07-20',order:1}],
-    chapters:[{id:'ch_micro_1',coursePhaseId:'cp_micro_a',title:'MLE & Discrete Choice'},{id:'ch_micro_2',coursePhaseId:'cp_micro_b',title:'Causal Inference'}],
+    chapters:[{id:'ch_micro_1',coursePhaseIds:['cp_micro_a'],title:'MLE & Discrete Choice'},{id:'ch_micro_2',coursePhaseIds:['cp_micro_b'],title:'Causal Inference'}],
     concepts:[
       {id:'cn_micro_1',chapterId:'ch_micro_1',title:'Maximum-Likelihood Estimation',touches:[],objectiveIds:[],prerequisiteConceptIds:[],legacyDueDate:'2026-06-25',legacySubtasks:[]},
       {id:'cn_micro_2',chapterId:'ch_micro_1',title:'Binary Outcome Models (Logit/Probit)',touches:[],objectiveIds:[],prerequisiteConceptIds:[],legacyDueDate:'2026-07-01',legacySubtasks:[]},
@@ -221,7 +234,7 @@ courses:[
     legacyTopics:[],legacyTasks:[]},
   {id:'ipe',name:"Int'l Political Economics",emoji:'🌍',color:'#BA7517',risk:'watch',schedule:'9–10/7',examDate:null,endDate:'2026-07-10',nextAction:'Hoàn thiện 2/3 slides còn lại',note:'Chỉ 2 ngày: 9/7 thuyết trình, 10/7 simulation.',archived:false,ects:5,grade:null,notes:[],instructor:'',contact:'',location:'',sections:[],attendance:{},
     coursePhases:[{id:'cp_ipe_1',title:'Day 1 — Presentation',startDate:'',endDate:'2026-07-09',order:0},{id:'cp_ipe_2',title:'Day 2 — Simulation',startDate:'',endDate:'2026-07-10',order:1}],
-    chapters:[{id:'ch_ipe_1',coursePhaseId:'cp_ipe_1',title:'Group Presentation'},{id:'ch_ipe_2',coursePhaseId:'cp_ipe_2',title:'Simulation Game'}],
+    chapters:[{id:'ch_ipe_1',coursePhaseIds:['cp_ipe_1'],title:'Group Presentation'},{id:'ch_ipe_2',coursePhaseIds:['cp_ipe_2'],title:'Simulation Game'}],
     concepts:[
       {id:'cn_ipe_1',chapterId:'ch_ipe_1',title:'Presentation slides content',touches:[],objectiveIds:[],prerequisiteConceptIds:[],legacyDueDate:'2026-07-08',legacySubtasks:[]},
       {id:'cn_ipe_2',chapterId:'ch_ipe_1',title:'Delivery / luyện thuyết trình',touches:[],objectiveIds:[],prerequisiteConceptIds:[],legacyDueDate:'2026-07-08',legacySubtasks:[]},
@@ -231,7 +244,7 @@ courses:[
     sessions:[],legacyLearningObjectives:[],legacyTopics:[],legacyTasks:[]},
   {id:'gse',name:'Global Sustainability Econ',emoji:'🌱',color:'#1D9E75',risk:'medium',schedule:'Thứ 5, 16:00–18:00',examDate:null,endDate:'2026-07-24',nextAction:'Viết Skill Development Plan (nháp 1)',note:'2 phần: Skill Development + Presentation & debate.',archived:false,ects:6,grade:null,notes:[],instructor:'',contact:'',location:'',sections:[],attendance:{},
     coursePhases:[{id:'cp_gse_1',title:'Lecture Series',startDate:'',endDate:'2026-07-24',order:0},{id:'cp_gse_2',title:'Assessment',startDate:'',endDate:'2026-07-24',order:1}],
-    chapters:[{id:'ch_gse_1',coursePhaseId:'cp_gse_1',title:'Core Lectures'},{id:'ch_gse_2',coursePhaseId:'cp_gse_2',title:'Assessed Work'}],
+    chapters:[{id:'ch_gse_1',coursePhaseIds:['cp_gse_1'],title:'Core Lectures'},{id:'ch_gse_2',coursePhaseIds:['cp_gse_2'],title:'Assessed Work'}],
     concepts:[
       {id:'cn_gse_1',chapterId:'ch_gse_1',title:'Introduction to Sustainability Econ',touches:[{understanding:4,confidence:4,timestamp:Date.now()-8640000*9,sessionId:null,legacy:true}],objectiveIds:[],prerequisiteConceptIds:[],legacyDueDate:'',legacySubtasks:[]},
       {id:'cn_gse_2',chapterId:'ch_gse_1',title:'Complexity Economics',touches:[{understanding:4,confidence:4,timestamp:Date.now()-8640000*8,sessionId:null,legacy:true}],objectiveIds:[],prerequisiteConceptIds:[],legacyDueDate:'',legacySubtasks:[]},
@@ -243,7 +256,7 @@ courses:[
     sessions:[],legacyLearningObjectives:[],legacyTopics:[],legacyTasks:[]},
   {id:'macro',name:'Macroeconomics',emoji:'📈',color:'#7C6EF5',risk:'medium',schedule:'T2 16–18h | T3 12–14h',examDate:null,endDate:'2026-07-25',nextAction:'Ôn chắc Ramsey model',note:'Kiến thức thực tế mới đến nửa Ramsey. Catch up!',archived:false,ects:6,grade:null,notes:[],instructor:'',contact:'',location:'',sections:[],attendance:{},
     coursePhases:[{id:'cp_macro_1',title:'Growth Models',startDate:'',endDate:'2026-07-14',order:0},{id:'cp_macro_2',title:'Business Cycles',startDate:'',endDate:'2026-07-25',order:1}],
-    chapters:[{id:'ch_macro_1',coursePhaseId:'cp_macro_1',title:'Solow–Ramsey'},{id:'ch_macro_2',coursePhaseId:'cp_macro_2',title:'RBC / DSGE & Cycles'}],
+    chapters:[{id:'ch_macro_1',coursePhaseIds:['cp_macro_1'],title:'Solow–Ramsey'},{id:'ch_macro_2',coursePhaseIds:['cp_macro_2'],title:'RBC / DSGE & Cycles'}],
     concepts:[
       {id:'cn_macro_1',chapterId:'ch_macro_1',title:'Solow Growth Model',touches:[{understanding:4,confidence:4,timestamp:Date.now()-8640000*10,sessionId:null,legacy:true}],objectiveIds:[],prerequisiteConceptIds:[],legacyDueDate:'',legacySubtasks:[]},
       {id:'cn_macro_2',chapterId:'ch_macro_1',title:'Ramsey Model',touches:[{understanding:4,confidence:3,timestamp:Date.now()-8640000*9,sessionId:null,legacy:true}],objectiveIds:[],prerequisiteConceptIds:[],legacyDueDate:'2026-06-24',legacySubtasks:[]},

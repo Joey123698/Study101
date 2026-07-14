@@ -160,8 +160,12 @@ function chapterProgress(chapter,allConcepts,data){
 }
 
 /** Phase (course-level) progress = average of its Chapters' progress. */
+/** Phase (course-level) progress = average of ITS Chapters' progress. v13:
+   Chapter↔Phase is now many-to-many (coursePhaseIds array) — a Chapter can
+   belong to multiple Phases and vice versa, so this checks array membership
+   instead of a 1:1 id match. */
 function phaseProgress(phase,allChapters,allConcepts,data){
-  const chs=allChapters.filter(ch=>ch.phaseId===phase.id||ch.coursePhaseId===phase.id);
+  const chs=allChapters.filter(ch=>(ch.coursePhaseIds||[]).includes(phase.id));
   if(chs.length===0)return 0;
   return Math.round(chs.reduce((s,ch)=>s+chapterProgress(ch,allConcepts,data),0)/chs.length);
 }

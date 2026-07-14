@@ -148,6 +148,100 @@ function TimelineRuler({start,end,ticks=5}){
     </div>)}
   </div>;}
 
+/* ── v13: Meetings — a new, distinct thing from Phase/Session per user's
+   explicit request: "để riêng một chỗ bao gồm tất cả meeting". Optionally
+   tags a Phase for context, but lives in its own block with its own
+   timeline (point markers, not a range bar like Phase). Each Meeting has
+   separate Trước/Sau notes fields. ── */
+function MeetingEditorModal({meeting,coursePhases,onSave,onClose}){
+  const [f,setF]=useState(meeting?{title:meeting.title,date:meeting.date,time:meeting.time||'',linkedPhaseId:meeting.linkedPhaseId||'',prepNotes:meeting.prepNotes||'',followupNotes:meeting.followupNotes||''}:{title:'',date:TODAY,time:'',linkedPhaseId:'',prepNotes:'',followupNotes:''});
+  const save=()=>{if(!f.title.trim())return;onSave(meeting?{...meeting,...f}:{id:uid(),...f});};
+  return<div className="ov" onClick={onClose}><div className="modal" style={{maxWidth:420,maxHeight:'85vh',overflowY:'auto'}} onClick={e=>e.stopPropagation()}>
+    <div className="flex-sb" style={{marginBottom:12}}><span style={{fontSize:14,fontWeight:500}}>{meeting?'✏️ Sửa Meeting':'+ Meeting mới'}</span><button className="btn-g btn-sm" onClick={onClose}>✕</button></div>
+    <div className="tx-dm" style={{marginBottom:2}}>Tên buổi họp *</div>
+    <input className="inp" value={f.title} onChange={e=>setF(p=>({...p,title:e.target.value}))} placeholder="VD: Họp nhóm chuẩn bị thuyết trình..." style={{marginBottom:10}} autoFocus/>
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:10}}>
+      <div><div className="tx-dm" style={{marginBottom:2}}>Ngày</div><input type="date" className="inp" value={f.date} onChange={e=>setF(p=>({...p,date:e.target.value}))}/></div>
+      <div><div className="tx-dm" style={{marginBottom:2}}>Giờ (tùy chọn)</div><input type="time" className="inp" value={f.time} onChange={e=>setF(p=>({...p,time:e.target.value}))}/></div>
+    </div>
+    {coursePhases.length>0&&<div style={{marginBottom:10}}>
+      <div className="tx-dm" style={{marginBottom:2}}>Thuộc Phase (tùy chọn, chỉ để tham khảo)</div>
+      <select className="sel" value={f.linkedPhaseId} onChange={e=>setF(p=>({...p,linkedPhaseId:e.target.value}))}>
+        <option value="">— Không gắn Phase —</option>
+        {coursePhases.map(p=><option key={p.id} value={p.id}>{p.title}</option>)}
+      </select>
+    </div>}
+    <div className="tx-dm" style={{marginBottom:2}}>📝 Ghi chú trước buổi họp</div>
+    <textarea value={f.prepNotes} onChange={e=>setF(p=>({...p,prepNotes:e.target.value}))} rows={3} placeholder="Cần chuẩn bị gì, agenda, câu hỏi..."
+      style={{width:'100%',background:'var(--sur)',border:'1px solid var(--bdr)',borderRadius:7,padding:'7px 9px',color:'var(--tx)',fontSize:12,outline:'none',fontFamily:'inherit',resize:'vertical',boxSizing:'border-box',marginBottom:10}}/>
+    <div className="tx-dm" style={{marginBottom:2}}>✅ Ghi chú sau buổi họp</div>
+    <textarea value={f.followupNotes} onChange={e=>setF(p=>({...p,followupNotes:e.target.value}))} rows={3} placeholder="Kết quả, việc cần làm tiếp theo..."
+      style={{width:'100%',background:'var(--sur)',border:'1px solid var(--bdr)',borderRadius:7,padding:'7px 9px',color:'var(--tx)',fontSize:12,outline:'none',fontFamily:'inherit',resize:'vertical',boxSizing:'border-box',marginBottom:14}}/>
+    <div style={{display:'flex',gap:8}}><button className="btn-p" style={{flex:1,justifyContent:'center'}} onClick={save}>Lưu</button><button className="btn-g" onClick={onClose}>Huỷ</button></div>
+  </div></div>;}
+
+function MeetingsBlock({course,onUpdate}){
+  const [showAdd,setShowAdd]=useState(false);
+  const [editMeeting,setEditMeeting]=useState(null);
+  const [expandedId,setExpandedId]=useState(null);
+  const meetings=(course.meetings||[]).slice().sort((a,b)=>(a.date+(a.time||'')).localeCompare(b.date+(b.time||'')));
+  const saveMeeting=(m)=>{
+    const list=course.meetings||[];
+    if(list.find(x=>x.id===m.id))onUpdate({meetings:list.map(x=>x.id===m.id?m:x)});
+    else onUpdate({meetings:[...list,m]});
+    setShowAdd(false);setEditMeeting(null);
+  };
+  const delMeeting=(id)=>{if(!confirm('Xoá buổi họp này?'))return;onUpdate({meetings:(course.meetings||[]).filter(m=>m.id!==id)});};
+
+  if(meetings.length===0)return<div className="card" style={{marginBottom:10}}>
+    <div className="flex-sb" style={{marginBottom:6}}><div className="lbl" style={{margin:0}}>🤝 MEETINGS</div><button className="btn-g btn-sm" onClick={()=>setShowAdd(true)}>+ Thêm Meeting</button></div>
+    <div className="tx-dm">Chưa có buổi họp nào.</div>
+    {showAdd&&<MeetingEditorModal coursePhases={course.coursePhases||[]} onSave={saveMeeting} onClose={()=>setShowAdd(false)}/>}
+  </div>;
+
+  // Point-marker timeline (meetings are moments, not ranges like Phase) —
+  // proportional across the meetings' own date span, +8% buffer each side.
+  const now=new Date();now.setHours(0,0,0,0);
+  const dates=meetings.map(m=>new Date(m.date).getTime());
+  const rangeStartRaw=new Date(Math.min(now.getTime(),...dates));
+  const rangeEndRaw=new Date(Math.max(now.getTime(),...dates));
+  const bufferMs=Math.max(2*86400000,(rangeEndRaw-rangeStartRaw)*0.08);
+  const rangeStart=new Date(rangeStartRaw.getTime()-bufferMs);
+  const rangeEnd=new Date(rangeEndRaw.getTime()+bufferMs);
+  const totalMs=Math.max(1,rangeEnd-rangeStart);
+  const pOf=(ds)=>Math.max(0,Math.min(100,(new Date(ds)-rangeStart)/totalMs*100));
+
+  return<div className="card" style={{marginBottom:10}}>
+    <div className="flex-sb" style={{marginBottom:8}}><div className="lbl" style={{margin:0}}>🤝 MEETINGS</div><button className="btn-g btn-sm" onClick={()=>setShowAdd(true)}>+ Thêm Meeting</button></div>
+    <div style={{position:'relative',height:28,marginBottom:10}}>
+      <div style={{position:'absolute',left:0,right:0,top:13,height:2,background:'var(--bdr)'}}/>
+      <div style={{position:'absolute',left:`${pOf(now)}%`,top:0,bottom:0,width:2,background:'var(--acc)',borderRadius:1}} title={`Hôm nay · ${fmtL(now)}`}/>
+      {meetings.map((m,i)=>{
+        const past=new Date(m.date)<now;
+        return<div key={m.id} style={{position:'absolute',left:`${pOf(m.date)}%`,top:4,transform:'translateX(-50%)',cursor:'pointer'}} title={`${m.title} · ${fmt(m.date)}`} onClick={()=>setExpandedId(id=>id===m.id?null:m.id)}>
+          <div style={{width:16,height:16,borderRadius:'50%',background:past?'var(--dm)':'var(--acc)',color:'#fff',fontSize:8,fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center'}}>M{i+1}</div>
+        </div>;})}
+    </div>
+    {meetings.map((m,i)=>{
+      const past=new Date(m.date)<now;
+      return<div key={m.id} style={{marginBottom:6}}>
+        <div style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer',padding:'5px 0'}} onClick={()=>setExpandedId(id=>id===m.id?null:m.id)}>
+          <span style={{width:18,height:18,borderRadius:'50%',background:past?'var(--dm)':'var(--acc)',color:'#fff',fontSize:8,fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>M{i+1}</span>
+          <span style={{fontSize:12,fontWeight:500,flex:1}}>{m.title}</span>
+          <span style={{fontSize:10,color:'var(--mu)'}}>{fmt(m.date)}{m.time?` · ${m.time}`:''}</span>
+          <button onClick={e=>{e.stopPropagation();setEditMeeting(m);}} style={{background:'none',border:'none',cursor:'pointer',color:'var(--dm)',fontSize:11,opacity:.5}}>✏️</button>
+          <button onClick={e=>{e.stopPropagation();delMeeting(m.id);}} style={{background:'none',border:'none',cursor:'pointer',color:'var(--dm)',fontSize:13,opacity:.35}}>×</button>
+        </div>
+        {expandedId===m.id&&<div style={{marginLeft:26,background:'var(--sur)',borderRadius:7,padding:'8px 10px',marginBottom:4}}>
+          <div style={{fontSize:10,fontWeight:600,color:'var(--mu)',marginBottom:2}}>📝 Trước buổi họp</div>
+          <div style={{fontSize:11,marginBottom:8,whiteSpace:'pre-wrap'}}>{m.prepNotes||<span className="tx-dm">— chưa ghi —</span>}</div>
+          <div style={{fontSize:10,fontWeight:600,color:'var(--mu)',marginBottom:2}}>✅ Sau buổi họp</div>
+          <div style={{fontSize:11,whiteSpace:'pre-wrap'}}>{m.followupNotes||<span className="tx-dm">— chưa ghi —</span>}</div>
+        </div>}
+      </div>;})}
+    {(showAdd||editMeeting)&&<MeetingEditorModal meeting={editMeeting} coursePhases={course.coursePhases||[]} onSave={saveMeeting} onClose={()=>{setShowAdd(false);setEditMeeting(null);}}/>}
+  </div>;}
+
 function CoursePhaseGantt({course,onUpdate,data}){
   const [showAdd,setShowAdd]=useState(false);
   const [editId,setEditId]=useState(null);
@@ -184,10 +278,19 @@ function CoursePhaseGantt({course,onUpdate,data}){
   };
   const delPhase=(id)=>{
     // Guard: don't silently orphan Chapters that reference this Phase
-    const hasChapters=(course.chapters||[]).some(ch=>ch.coursePhaseId===id);
+    const hasChapters=(course.chapters||[]).some(ch=>(ch.coursePhaseIds||[]).includes(id));
     if(hasChapters&&!confirm('Phase này có Chapter bên trong. Xoá Phase sẽ để Chapter đó không thuộc Phase nào. Tiếp tục?'))return;
     onUpdate({coursePhases:coursePhases.filter(p=>p.id!==id)});
   };
+  const togChapterInPhase=(phaseId,chapterId)=>{
+    const chapters=course.chapters||[];
+    onUpdate({chapters:chapters.map(ch=>{
+      if(ch.id!==chapterId)return ch;
+      const ids=ch.coursePhaseIds||[];
+      return{...ch,coursePhaseIds:ids.includes(phaseId)?ids.filter(x=>x!==phaseId):[...ids,phaseId]};
+    })});
+  };
+  const [managingPhaseId,setManagingPhaseId]=useState(null);
   return<div className="card" style={{marginBottom:10}}>
     <div className="flex-sb" style={{marginBottom:8}}>
       <div className="lbl" style={{margin:0}}>📊 PHASE TRONG MÔN</div>
@@ -219,11 +322,12 @@ function CoursePhaseGantt({course,onUpdate,data}){
     </>}
     <div style={{position:'relative'}}>
       {coursePhases.map(p=>{
-        const linkedChapterCount=(course.chapters||[]).filter(ch=>ch.coursePhaseId===p.id).length;
+        const linkedChapterCount=(course.chapters||[]).filter(ch=>(ch.coursePhaseIds||[]).includes(p.id)).length;
         const prog=phaseProgress(p,course.chapters||[],course.concepts||[],data);
         const timing=phaseTiming(p);
         const ts=TIMING_STYLE[timing];
-        return<div key={p.id} className="gantt2-row">
+        return<div key={p.id}>
+        <div className="gantt2-row">
           <div className="gantt2-label" onClick={()=>{setEditId(p.id);setF({title:p.title,startDate:p.startDate||TODAY,endDate:p.endDate||TODAY});setShowAdd(true);}} style={{cursor:'pointer',color:ts.text,opacity:timing==='past'?.7:1}} title="Click để sửa">{p.title}</div>
           <div className="gantt2-track" style={{position:'relative'}}>
             <div className="gantt2-bar" style={{left:`${pOf(p.startDate)}%`,width:`${wOf(p.startDate,p.endDate)}%`,background:linkedChapterCount===0?'var(--dm)':ts.bar,opacity:linkedChapterCount===0?.35:ts.opacity,boxShadow:ts.glow,position:'relative',overflow:'hidden',transition:'box-shadow .2s'}} title={linkedChapterCount===0?'Chưa có Chapter nào gắn vào Phase này — % sẽ luôn là 0% cho tới khi bạn gắn ít nhất 1 Chapter':`${fmt(p.startDate)} → ${fmt(p.endDate)} · ${dayCount(p)} ngày · ${prog}% mastery${timing==='current'?' · ĐANG Ở PHASE NÀY':timing==='past'?' · Đã qua':' · Sắp tới'}`}>
@@ -237,7 +341,18 @@ function CoursePhaseGantt({course,onUpdate,data}){
                the bars no matter the layout. */}
             {todayInRange&&<div style={{position:'absolute',left:`${todayPct}%`,top:-3,bottom:-3,width:2,background:'var(--acc)',zIndex:2,borderRadius:1,pointerEvents:'none'}} title={`Hôm nay · ${fmtL(now)}`}/>}
           </div>
-          <button onClick={()=>delPhase(p.id)} style={{background:'none',border:'none',cursor:'pointer',color:'var(--dm)',fontSize:13,opacity:.4,marginLeft:6}}>×</button>
+          <button onClick={()=>setManagingPhaseId(id=>id===p.id?null:p.id)} title="Gắn/bỏ Chapter cho Phase này" style={{background:'none',border:'none',cursor:'pointer',color:managingPhaseId===p.id?'var(--acc)':'var(--dm)',fontSize:12,opacity:managingPhaseId===p.id?1:.5,marginLeft:6}}>🔗</button>
+          <button onClick={()=>delPhase(p.id)} style={{background:'none',border:'none',cursor:'pointer',color:'var(--dm)',fontSize:13,opacity:.4,marginLeft:2}}>×</button>
+        </div>
+        {/* v13: assign Chapters to this Phase directly from the Phase row itself
+           (per user's request), instead of only from each Chapter's own editor.
+           Many-to-many: a Chapter can be ticked for more than one Phase. */}
+        {managingPhaseId===p.id&&<div style={{background:'var(--sur)',borderRadius:7,padding:'8px 10px',marginBottom:6,marginLeft:2}}>
+          {(course.chapters||[]).length===0&&<div className="tx-dm">Chưa có Chapter nào trong môn này.</div>}
+          {(course.chapters||[]).map(ch=><label key={ch.id} style={{display:'flex',alignItems:'center',gap:7,fontSize:11,cursor:'pointer',padding:'2px 0'}}>
+            <input type="checkbox" checked={(ch.coursePhaseIds||[]).includes(p.id)} onChange={()=>togChapterInPhase(p.id,ch.id)}/>{ch.title}
+          </label>)}
+        </div>}
         </div>;})}
     </div>
     {coursePhases.length>0&&<div style={{display:'flex',gap:12,marginTop:8,justifyContent:'center'}}>
@@ -967,7 +1082,7 @@ function ConceptRow({concept,color,examDate,data,course,upd,onTouch,onEdit,onDel
    3 Sessions), rather than knowledge learned through repetition. Left blank,
    nothing changes — this is purely additive, 100% backward-compatible. ── */
 function ConceptEditorModal({concept,chapterId,onSave,onClose}){
-  const [f,setF]=useState(concept?{title:concept.title,targetDate:concept.targetDate||concept.legacyDueDate||'',targetTouches:concept.targetTouches||''}:{title:'',targetDate:'',targetTouches:''});
+  const [f,setF]=useState(concept?{title:concept.title,startDate:concept.startDate||'',targetDate:concept.targetDate||concept.legacyDueDate||'',targetTouches:concept.targetTouches||''}:{title:'',startDate:'',targetDate:'',targetTouches:''});
   const s=(k,v)=>setF(p=>({...p,[k]:v}));
   const save=()=>{
     if(!f.title.trim())return;
@@ -978,8 +1093,13 @@ function ConceptEditorModal({concept,chapterId,onSave,onClose}){
     <div className="flex-sb" style={{marginBottom:12}}><span style={{fontSize:14,fontWeight:500}}>{concept?'✏️ Sửa Concept':'+ Concept mới'}</span><button className="btn-g btn-sm" onClick={onClose}>✕</button></div>
     <div className="tx-dm" style={{marginBottom:2}}>Tên concept *</div>
     <input className="inp" value={f.title} onChange={e=>s('title',e.target.value)} placeholder="VD: Maximum Likelihood Estimation..." style={{marginBottom:10}} autoFocus/>
-    <div className="tx-dm" style={{marginBottom:2}}>Muốn thành thạo trước ngày nào (tùy chọn)</div>
-    <input type="date" className="inp" value={f.targetDate} onChange={e=>s('targetDate',e.target.value)} style={{marginBottom:10}}/>
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:10}}>
+      <div><div className="tx-dm" style={{marginBottom:2}}>Bắt đầu học từ (tùy chọn)</div>
+        <input type="date" className="inp" value={f.startDate} onChange={e=>s('startDate',e.target.value)}/></div>
+      <div><div className="tx-dm" style={{marginBottom:2}}>Muốn thành thạo trước ngày nào (tùy chọn)</div>
+        <input type="date" className="inp" value={f.targetDate} onChange={e=>s('targetDate',e.target.value)}/></div>
+    </div>
+    <div style={{fontSize:10,color:'var(--dm)',marginBottom:10}}>Để trống ngày bắt đầu: Study Timeline sẽ tự suy ra khoảng làm việc từ deadline của Concept trước đó — điền vào nếu muốn chính xác hơn.</div>
     <div className="tx-dm" style={{marginBottom:2}}>Concept dạng Task — cần bao nhiêu Session mới xong? (tùy chọn)</div>
     <input type="number" min="1" className="inp" value={f.targetTouches} onChange={e=>s('targetTouches',e.target.value)} placeholder="Để trống = tính theo Mastery (kiến thức) như bình thường" style={{marginBottom:4}}/>
     <div style={{fontSize:10,color:'var(--dm)',marginBottom:14}}>Điền số này nếu Concept là 1 việc cần làm (vd "Thuyết trình" cần 3 buổi) chứ không phải kiến thức cần học lại nhiều lần — % sẽ tính theo số buổi đã xong / số buổi cần, không dùng công thức Mastery nữa.</div>
@@ -996,7 +1116,7 @@ function ChapterBlock({chapter,concepts,examDate,color,data,course,upd,onAddConc
   // coursePhaseId:'' and silently never counts toward Phase/Course progress
   // (found via a real bug report — Concepts showed correct %, Phase stayed
   // at 0%). Surface it right here so it's visible without opening the editor.
-  const isOrphanChapter=!chapter.coursePhaseId||!(course.coursePhases||[]).some(p=>p.id===chapter.coursePhaseId);
+  const isOrphanChapter=(chapter.coursePhaseIds||[]).filter(id=>(course.coursePhases||[]).some(p=>p.id===id)).length===0;
   return<div className="card" style={{marginBottom:8,padding:'11px 14px',border:isOrphanChapter?'1px solid var(--waBdr)':undefined}}>
     <div style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer'}} onClick={()=>setExpanded(e=>!e)}>
       <span style={{fontSize:11,color:'var(--dm)'}}>{expanded?'▼':'▶'}</span>
@@ -1023,26 +1143,28 @@ function ChapterBlock({chapter,concepts,examDate,color,data,course,upd,onAddConc
 
 /* ── Chapter editor (lightweight — title + which Phase it belongs to) ── */
 function ChapterEditorModal({chapter,coursePhases,onSave,onClose}){
-  const [f,setF]=useState(chapter?{title:chapter.title,coursePhaseId:chapter.coursePhaseId||''}:{title:'',coursePhaseId:coursePhases[0]?.id||''});
-  const isOrphan=f.coursePhaseId&&!coursePhases.some(p=>p.id===f.coursePhaseId);
-  const isUnset=!f.coursePhaseId;
-  const save=()=>{if(!f.title.trim())return;onSave(chapter?{...chapter,...f}:{id:uid(),...f});};
+  const [f,setF]=useState(chapter?{title:chapter.title,coursePhaseIds:chapter.coursePhaseIds||[]}:{title:'',coursePhaseIds:coursePhases[0]?[coursePhases[0].id]:[]});
+  const validIds=new Set(coursePhases.map(p=>p.id));
+  const hasOrphanRef=f.coursePhaseIds.some(id=>!validIds.has(id));
+  const isUnset=f.coursePhaseIds.length===0;
+  const togPhase=(id)=>setF(p=>({...p,coursePhaseIds:p.coursePhaseIds.includes(id)?p.coursePhaseIds.filter(x=>x!==id):[...p.coursePhaseIds,id]}));
+  const save=()=>{if(!f.title.trim())return;onSave(chapter?{...chapter,...f,coursePhaseIds:f.coursePhaseIds.filter(id=>validIds.has(id))}:{id:uid(),...f});};
   return<div className="ov" onClick={onClose}><div className="modal" style={{maxWidth:360}} onClick={e=>e.stopPropagation()}>
     <div className="flex-sb" style={{marginBottom:12}}><span style={{fontSize:14,fontWeight:500}}>{chapter?'✏️ Sửa Chapter':'+ Chapter mới'}</span><button className="btn-g btn-sm" onClick={onClose}>✕</button></div>
     <div className="tx-dm" style={{marginBottom:2}}>Tên chapter *</div>
     <input className="inp" value={f.title} onChange={e=>setF(p=>({...p,title:e.target.value}))} placeholder="VD: Binary Choice Models..." style={{marginBottom:10}} autoFocus/>
     {coursePhases.length>0&&<div>
-      <div className="tx-dm" style={{marginBottom:2}}>Thuộc Phase</div>
-      {/* v13: explicit placeholder option — without this, a Chapter whose
-         coursePhaseId doesn't match any real Phase (orphaned, e.g. created
-         before any Phase existed) would have the browser silently render the
-         FIRST option as if selected, hiding the mismatch. Now it shows
-         clearly as unset until you actually pick one. */}
-      <select className="sel" value={f.coursePhaseId} onChange={e=>setF(p=>({...p,coursePhaseId:e.target.value}))} style={{marginBottom:isUnset||isOrphan?6:14}}>
-        {(isUnset||isOrphan)&&<option value="">— Chưa gắn Phase nào, chọn 1 cái —</option>}
-        {coursePhases.map(p=><option key={p.id} value={p.id}>{p.title}</option>)}
-      </select>
-      {(isUnset||isOrphan)&&<div style={{fontSize:10,color:'var(--wa)',marginBottom:14}}>⚠️ Chapter này chưa gắn Phase nào — % tiến độ của Phase/môn học sẽ không tính các Concept trong Chapter này cho tới khi bạn chọn 1 Phase và bấm Lưu.</div>}
+      {/* v13: Chapter↔Phase is many-to-many now — a Chapter can belong to
+         more than 1 Phase (and a Phase can share Chapters with others),
+         since forcing exactly 1 Phase per Chapter didn't fit courses where
+         Phase count and Chapter count just don't line up 1:1. Tick 1+. */}
+      <div className="tx-dm" style={{marginBottom:4}}>Thuộc (những) Phase nào — tick 1 hoặc nhiều</div>
+      <div style={{display:'flex',flexDirection:'column',gap:4,marginBottom:isUnset?6:14}}>
+        {coursePhases.map(p=><label key={p.id} style={{display:'flex',alignItems:'center',gap:7,fontSize:12,cursor:'pointer'}}>
+          <input type="checkbox" checked={f.coursePhaseIds.includes(p.id)} onChange={()=>togPhase(p.id)}/>{p.title}
+        </label>)}
+      </div>
+      {(isUnset||hasOrphanRef)&&<div style={{fontSize:10,color:'var(--wa)',marginBottom:14}}>⚠️ Chapter này chưa gắn Phase nào còn hợp lệ — % tiến độ của (những) Phase/môn học sẽ không tính các Concept trong Chapter này cho tới khi bạn tick ít nhất 1 Phase và bấm Lưu.</div>}
     </div>}
     <div style={{display:'flex',gap:8}}><button className="btn-p" style={{flex:1,justifyContent:'center'}} onClick={save}>Lưu</button><button className="btn-g" onClick={onClose}>Huỷ</button></div>
   </div></div>;}
@@ -1146,30 +1268,54 @@ function CourseScheduleView({course,data}){
   </div>;
 
   const now=new Date();now.setHours(0,0,0,0);
-  const startAct=new Date(Math.min(new Date(withDate[0]._date).getTime(),now.getTime()));startAct.setHours(0,0,0,0);
-  const endD=new Date(course.examDate||course.endDate||withDate[withDate.length-1]._date);endD.setHours(0,0,0,0);
-  const totalD=Math.max(1,Math.round((endD-startAct)/86400000)+1);
-  const passedD=Math.min(totalD,Math.max(0,Math.round((now-startAct)/86400000)+1));
+  // v13: full natural range (unclamped) — used to compute each Concept's
+  // window and the overall days-passed/left caption. Previously this WAS
+  // also the rendered width, which made short courses (e.g. IPE spanning
+  // just 2 days) show a near-useless sliver of a timeline. Rendering is now
+  // a separately-navigable fixed-width viewport (see VISIBLE_DAYS below).
+  const fullStart=new Date(Math.min(now.getTime(),...withDate.map(c=>new Date(c.startDate||c._date).getTime())));fullStart.setHours(0,0,0,0);
+  const fullEnd=new Date(Math.max(now.getTime(),new Date(course.examDate||course.endDate||withDate[withDate.length-1]._date).getTime(),...withDate.map(c=>new Date(c._date).getTime())));fullEnd.setHours(0,0,0,0);
+  const totalD=Math.max(1,Math.round((fullEnd-fullStart)/86400000)+1);
+  const passedD=Math.min(totalD,Math.max(0,Math.round((now-fullStart)/86400000)+1));
   const leftD=Math.max(0,totalD-passedD);
 
-  // Chronological window inference (see ConceptDayStripRow's comment) — must
-  // use the DATE-sorted list, before any status-based reordering for display.
+  // Per-Concept window: real concept.startDate when set (accurate), else
+  // inferred as "the previous Concept's deadline + 1 day" (chronological
+  // chain — an approximation, kept only as a fallback for Concepts that
+  // haven't been given a real start date yet).
   const windows={};
   withDate.forEach((c,i)=>{
     const wEnd=new Date(c._date);wEnd.setHours(0,0,0,0);
-    const wStart=i===0?startAct:(()=>{const d=new Date(withDate[i-1]._date);d.setHours(0,0,0,0);d.setDate(d.getDate()+1);return d;})();
-    windows[c.id]={windowStart:wStart,windowEnd:wEnd};
+    let wStart;
+    if(c.startDate){wStart=new Date(c.startDate);wStart.setHours(0,0,0,0);}
+    else wStart=i===0?fullStart:(()=>{const d=new Date(withDate[i-1]._date);d.setHours(0,0,0,0);d.setDate(d.getDate()+1);return d;})();
+    windows[c.id]={windowStart:wStart,windowEnd:wEnd,isInferred:!c.startDate};
   });
 
-  // Display order: đang học (top) → chưa học (giữa) → đã xong (dưới cùng),
-  // date-order preserved within each tier since withDate is already sorted
-  // and .filter() preserves relative order.
   const inProgress=withDate.filter(c=>{const p=calcProgress(c,data);return p>0&&p<100;});
   const notStarted=withDate.filter(c=>(c.touches||[]).length===0);
   const doneConcepts=withDate.filter(c=>calcProgress(c,data)>=100);
   const ordered=[...inProgress,...notStarted,...doneConcepts];
 
-  const days=[];{let cur=new Date(startAct);while(cur<=endD){days.push(new Date(cur));cur=new Date(cur.getTime()+86400000);}}
+  // Navigable viewport: fixed width, independent of the full range above.
+  // Defaults to a week of past context leading into today, clamped so it
+  // never shows before fullStart or scrolls past fullEnd.
+  const VISIBLE_DAYS=21;
+  const clampViewStart=(d)=>{
+    const minStart=new Date(fullStart);
+    const maxStart=new Date(fullEnd);maxStart.setDate(maxStart.getDate()-VISIBLE_DAYS+1);
+    if(d<minStart)return new Date(minStart);
+    if(maxStart>=minStart&&d>maxStart)return new Date(maxStart);
+    return d;
+  };
+  const defaultViewStart=(()=>{const d=new Date(now);d.setDate(d.getDate()-7);return clampViewStart(d);})();
+  const [viewStart,setViewStart]=useState(defaultViewStart);
+  const shiftView=(deltaDays)=>setViewStart(v=>clampViewStart(new Date(v.getTime()+deltaDays*86400000)));
+  const viewEnd=new Date(viewStart.getTime()+(VISIBLE_DAYS-1)*86400000);
+  const atStart=viewStart.getTime()<=fullStart.getTime();
+  const atEnd=viewEnd.getTime()>=fullEnd.getTime();
+
+  const days=[];{let cur=new Date(viewStart);for(let i=0;i<VISIBLE_DAYS;i++){days.push(new Date(cur));cur=new Date(cur.getTime()+86400000);}}
   const stripWidth=days.length*DAY_PX;
 
   return<div className="card" style={{marginBottom:10}}>
@@ -1184,6 +1330,12 @@ function CourseScheduleView({course,data}){
       <span><span style={{display:'inline-block',width:9,height:9,background:'var(--go)',marginRight:3,verticalAlign:'middle'}}/>Sắp tới</span>
       <span><span style={{display:'inline-block',width:9,height:9,background:'#7C5CBF88',marginRight:3,verticalAlign:'middle'}}/>Cuối tuần</span>
       <span><span style={{display:'inline-block',width:9,height:9,border:'2px solid var(--cr)',marginRight:3,verticalAlign:'middle'}}/>Deadline</span>
+    </div>
+    <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:6}}>
+      <button className="btn-g btn-sm" disabled={atStart} style={{opacity:atStart?.4:1}} onClick={()=>shiftView(-7)}>‹ 7 ngày</button>
+      <span style={{fontSize:10,color:'var(--mu)',flex:1,textAlign:'center'}}>{fmt(viewStart)} → {fmt(viewEnd)}</span>
+      <button className="btn-g btn-sm" onClick={()=>setViewStart(defaultViewStart)}>Hôm nay</button>
+      <button className="btn-g btn-sm" disabled={atEnd} style={{opacity:atEnd?.4:1}} onClick={()=>shiftView(7)}>7 ngày ›</button>
     </div>
     <div style={{overflowX:'auto',paddingBottom:4}}>
       <div style={{width:Math.max(stripWidth,200),marginLeft:140}}>
@@ -1257,6 +1409,7 @@ function CourseDetail({course,data,upd,awardXP,onBack,onUpdate,onDelete}){
           <div><div style={{fontSize:17,fontWeight:700}}>{course.name}</div><Badge risk={course.risk}/></div>
         </div>
         <div style={{display:'flex',gap:6}}>
+          <button className="btn-g btn-sm" onClick={()=>onUpdate({archived:!course.archived})} title={course.archived?'Bỏ lưu trữ — đưa lại vào Đang học':'Lưu trữ môn học này'}>{course.archived?'📤 Bỏ lưu trữ':'📥 Lưu trữ'}</button>
           <button className="btn-g btn-sm" onClick={()=>setShowEditor(true)}>✏️ Sửa</button>
           {delConfirm?<button className="btn-g btn-sm" style={{color:'var(--cr)'}} onClick={onDelete}>Xác nhận xoá?</button>
             :<button className="btn-g btn-sm" onClick={()=>{setDelConfirm(true);setTimeout(()=>setDelConfirm(false),3000);}} style={{color:'var(--cr)'}}>🗑️</button>}
@@ -1280,6 +1433,7 @@ function CourseDetail({course,data,upd,awardXP,onBack,onUpdate,onDelete}){
     <CourseAttendance course={course} onUpdate={onUpdate}/>
     <CourseScheduleView course={course} data={data}/>
     <CoursePhaseGantt course={course} onUpdate={onUpdate} data={data}/>
+    <MeetingsBlock course={course} onUpdate={onUpdate}/>
     <SessionLibraryBlock course={course} data={data} upd={upd} awardXP={awardXP} onUpdate={onUpdate}/>
 
     <div className="flex-sb" style={{marginBottom:8}}>
