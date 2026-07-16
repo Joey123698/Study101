@@ -26,6 +26,8 @@ function App(){
   const [page,setPage]=useState('mission');const [pageParams,setPageParams]=useState({});
   const [sbOpen,setSbOpen]=useState(true);
   const [showTimer,setShowTimer]=useState(false);
+  const [showQuickNote,setShowQuickNote]=useState(false);
+  const [quickNoteText,setQuickNoteText]=useState('');
   const [expandedNav,setExpandedNav]=useState({});
   const saveTimer=useRef(null);const saving=useRef(false);const unsubRef=useRef(null);
 
@@ -57,6 +59,13 @@ function App(){
   const signOut=()=>{if(unsubRef.current)unsubRef.current();if(_auth)_auth.signOut();setUser(null);setData(null);};
   const nav=(pg,params={})=>{setPage(pg);setPageParams(params);};
   const togNav=(id)=>setExpandedNav(p=>({...p,[id]:!p[id]}));
+  // Ghi chú nhanh trên header — dump thẳng vào Parking Lot Notes (cùng chỗ
+  // ParkingLotPage đọc/hiển thị), không cần rời trang đang làm để capture ý nghĩ.
+  const saveQuickNote=()=>{
+    if(!quickNoteText.trim())return;
+    upd({parkingNotes:[{id:uid(),title:'',content:quickNoteText.trim(),color:'#1A2038',noteType:'text',todos:[],date:TODAY},...(data.parkingNotes||[])]});
+    setQuickNoteText('');setShowQuickNote(false);
+  };
 
   if(authLoading)return null;
   if(FB_ON&&fbInitFailed)return<FirebaseErrorScreen/>;
@@ -93,7 +102,7 @@ function App(){
     <div className={`sb${sbOpen?'':' collapsed'}`}>
       <div className="sb-logo">
         <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-          <div className="sb-title">⚡<span className="sb-ver"> StudyOS <span style={{fontSize:9,background:'var(--acc2)',color:'var(--acc)',borderRadius:3,padding:'1px 4px'}}>v12</span></span></div>
+          <div className="sb-title">📘<span className="sb-ver"> Study101</span></div>
           <button className="sb-toggle" onClick={()=>setSbOpen(o=>!o)} title={sbOpen?'Thu gọn sidebar':'Mở rộng sidebar'}>{sbOpen?'◀':'▶'}</button>
         </div>
         {sbOpen&&<div style={{marginTop:7}}>
@@ -165,6 +174,7 @@ function App(){
           {page==='courses'&&pageParams.courseId&&<button className="btn-g btn-sm" onClick={()=>nav('courses')} style={{marginLeft:4}}>← Danh sách môn</button>}
         </div>
         <div style={{display:'flex',alignItems:'center',gap:10}}>
+          <button className="btn-g btn-sm" title="Ghi chú nhanh — lưu thẳng vào Parking Lot" onClick={()=>setShowQuickNote(true)} style={{fontSize:13}}>📝</button>
           <button className="btn-g btn-sm" title="Timer / Pomodoro — cho hoạt động ngoài môn học (tìm việc, đọc sách...)" onClick={()=>setShowTimer(true)} style={{fontSize:13}}>⏱️</button>
           <div style={{fontSize:11,color:'var(--mu)'}}>{new Date().toLocaleDateString('vi-VN',{day:'numeric',month:'numeric',year:'numeric'})}</div>
         </div>
@@ -179,6 +189,22 @@ function App(){
         </div>
         <div className="tx-dm" style={{marginBottom:10}}>Dùng cho hoạt động ngoài môn học (tìm việc, đọc sách, volunteer...). Học có Concept cụ thể thì dùng Quick Session trong trang Môn học sẽ chính xác hơn.</div>
         <TimerPage data={data} upd={upd} awardXP={awardXP} nav={nav}/>
+      </div>
+    </div>}
+    {showQuickNote&&<div className="ov" onClick={()=>setShowQuickNote(false)}>
+      <div className="modal" style={{maxWidth:420}} onClick={e=>e.stopPropagation()}>
+        <div className="flex-sb" style={{marginBottom:10}}>
+          <span style={{fontSize:14,fontWeight:600}}>📝 Ghi chú nhanh</span>
+          <button className="btn-g btn-sm" onClick={()=>setShowQuickNote(false)}>✕</button>
+        </div>
+        <div className="tx-dm" style={{marginBottom:8}}>Lưu thẳng vào 🅿️ Parking Lot → Notes — không cần rời trang đang làm.</div>
+        <textarea autoFocus value={quickNoteText} onChange={e=>setQuickNoteText(e.target.value)} placeholder="Viết gì đó..."
+          style={{width:'100%',minHeight:110,background:'var(--sur)',border:'1px solid var(--bdr)',borderRadius:8,color:'var(--tx)',fontSize:13,padding:'10px',resize:'vertical',boxSizing:'border-box',outline:'none',marginBottom:10,fontFamily:'inherit'}}
+          onKeyDown={e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter')saveQuickNote();}}/>
+        <div style={{display:'flex',gap:8}}>
+          <button className="btn-p" style={{flex:1,justifyContent:'center'}} onClick={saveQuickNote}>Lưu</button>
+          <button className="btn-g" onClick={()=>setShowQuickNote(false)}>Huỷ</button>
+        </div>
       </div>
     </div>}
   </div>;}

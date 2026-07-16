@@ -26,8 +26,8 @@ function SignInPage({onSignIn,onSignInEmail,onSignUpEmail,onResetPassword,authEr
     setLoading(false);
   };
   return<div className="signin-wrap"><div style={{textAlign:'center',maxWidth:380,width:'100%',padding:'36px 32px',background:'var(--sur)',border:'1px solid var(--bdr)',borderRadius:20}}>
-    <div style={{fontSize:46,marginBottom:14}}>⚡</div>
-    <div style={{fontSize:21,fontWeight:700,color:'var(--acc)',marginBottom:6}}>StudyOS v11</div>
+    <div style={{fontSize:46,marginBottom:14}}>📘</div>
+    <div style={{fontSize:21,fontWeight:700,color:'var(--acc)',marginBottom:6}}>Study101</div>
     <p style={{color:'var(--mu)',marginBottom:20,lineHeight:1.7,fontSize:13}}>Timer Fix · Sidebar · Study Journal · Mini Cards<br/><strong style={{color:'var(--tx)'}}>Sync real-time tất cả thiết bị</strong></p>
 
     <button className="g-btn" onClick={onSignIn} type="button">

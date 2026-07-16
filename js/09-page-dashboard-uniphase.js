@@ -107,6 +107,7 @@ function DashboardPage({data,upd,nav,awardXP}){
   const [selDate,setSelDate]=useState(TODAY);
   const [showAddEv,setShowAddEv]=useState(false);
   const [editEv,setEditEv]=useState(null);
+  const [eventsOpen,setEventsOpen]=useState(true); // thu gọn được, mặc định xổ ra
   const [showAddAdmin,setShowAddAdmin]=useState(false);
   const [editAdmin,setEditAdmin]=useState(null); // {src,item}
   const [perfDate,setPerfDate]=useState(TODAY);
@@ -148,11 +149,22 @@ function DashboardPage({data,upd,nav,awardXP}){
     .filter(([date])=>date<TODAY)
     .flatMap(([date,items])=>(items||[]).filter(t=>!String(t.id).startsWith('rec_')&&!t.done).map(t=>({...t,src:'day',overdueFrom:date})))
     :[];
-  const allAdmin=[...recAdmin.map(r=>({...r,src:'rec'})),...dailyAdmin.map(t=>({...t,src:'day'})),...overdueAdmin];
+  // Parking Lot tasks WITH a deadline also surface here — one due-today (or
+  // whatever date is being viewed) list instead of two separate places to
+  // check. Same overdue-carries-forward treatment as one-off admin tasks
+  // above: shown once, on TODAY's view, tagged with where it came from.
+  const parkingWithDeadline=(data.parkingTasks||[]).filter(t=>t.deadline&&!t.done);
+  const parkingDueOnDate=parkingWithDeadline.filter(t=>t.deadline===adminDate).map(t=>({id:t.id,title:t.text,emoji:'🅿️',done:false,src:'parking'}));
+  const parkingOverdue=adminDate===TODAY?parkingWithDeadline.filter(t=>t.deadline<TODAY).map(t=>({id:t.id,title:t.text,emoji:'🅿️',done:false,src:'parking',overdueFrom:t.deadline})):[];
+  const allAdmin=[...recAdmin.map(r=>({...r,src:'rec'})),...dailyAdmin.map(t=>({...t,src:'day'})),...overdueAdmin,...parkingDueOnDate,...parkingOverdue];
   const perfD=(date)=>{const p=data.dailyPerf[date]||{};const h=data.studyLog.filter(l=>l.date===date).reduce((s,l)=>s+l.hours,0);const act=data.habits.filter(x=>!x.archived);return{...p,h,hd:act.filter(x=>x.completions[date]).length,ht:act.length};};
   const perf=perfD(perfDate);
   const isAdminDone=(item)=>{if(item.src==='rec'){const d=data.adminTasks.daily[adminDate]||[];return d.find(t=>t.id===`rec_${item.id}`)?.done||false;}return item.done||false;};
   const togAdmin=(item)=>{
+    if(item.src==='parking'){
+      upd({parkingTasks:(data.parkingTasks||[]).map(t=>t.id===item.id?{...t,done:!t.done,status:!t.done?'done':'todo'}:t)});
+      return;
+    }
     const at={...data.adminTasks,daily:{...data.adminTasks.daily}};
     if(item.src==='rec'){
       const existing=at.daily[adminDate]||[];
@@ -360,7 +372,8 @@ function DashboardPage({data,upd,nav,awardXP}){
           <span style={{fontSize:12,textDecoration:done?'line-through':'none',opacity:done?.6:1,flex:1}}>{item.emoji} {item.title}</span>
           {item.overdueFrom&&<span style={{fontSize:9,color:'var(--cr)',fontWeight:700}} title={`Chưa xong từ ${fmt(item.overdueFrom)}`}>Quá hạn</span>}
           {item.src==='rec'&&<span style={{fontSize:9,color:'var(--dm)'}}>↻</span>}
-          <button onClick={()=>setEditAdmin({src:item.src,item})} style={{background:'none',border:'none',cursor:'pointer',color:'var(--dm)',fontSize:11,opacity:.5}}>✏️</button>
+          {item.src==='parking'&&<button onClick={()=>nav('parking')} style={{background:'none',border:'none',cursor:'pointer',color:'var(--acc)',fontSize:9,opacity:.85,whiteSpace:'nowrap'}} title="Xem trong Parking Lot">🅿️ Parking</button>}
+          {item.src!=='parking'&&<button onClick={()=>setEditAdmin({src:item.src,item})} style={{background:'none',border:'none',cursor:'pointer',color:'var(--dm)',fontSize:11,opacity:.5}}>✏️</button>}
           {item.src==='day'&&<button style={{background:'none',border:'none',cursor:'pointer',color:'var(--dm)',fontSize:12,opacity:.5}} onClick={()=>{const homeDate=item.overdueFrom||adminDate;const at={...data.adminTasks,daily:{...data.adminTasks.daily}};at.daily[homeDate]=(at.daily[homeDate]||[]).filter(t=>t.id!==item.id);upd({adminTasks:at});}}>×</button>}
         </div>;})}
         <button className="btn-g btn-sm" style={{marginTop:8,width:'100%',justifyContent:'center'}} onClick={()=>setShowAddAdmin(true)}>+ Thêm task {adminDate===TODAY?'hôm nay':fmt(adminDate)}</button>
@@ -382,7 +395,14 @@ function DashboardPage({data,upd,nav,awardXP}){
     </div>
     <div className="g2" style={{marginBottom:10}}>
       <div className="card">
-        <div className="flex-sb" style={{marginBottom:8}}><div className="lbl" style={{margin:0}}>📅 LỊCH</div><button className="btn-g btn-sm" onClick={()=>setShowAddEv(true)}>+ Event</button></div>
+        <div className="flex-sb" style={{marginBottom:eventsOpen?8:0}}>
+          <div style={{display:'flex',alignItems:'center',gap:6,cursor:'pointer'}} onClick={()=>setEventsOpen(o=>!o)}>
+            <span style={{fontSize:10,color:'var(--dm)'}}>{eventsOpen?'▼':'▶'}</span>
+            <div className="lbl" style={{margin:0}}>📅 LỊCH</div>
+          </div>
+          <button className="btn-g btn-sm" onClick={()=>setShowAddEv(true)}>+ Event</button>
+        </div>
+        {eventsOpen&&<>
         <MiniCalendar events={data.events} onDateSelect={setSelDate} selectedDate={selDate}/>
         <div style={{marginTop:8,paddingTop:8,borderTop:'1px solid var(--bdr)'}}>
           <div style={{fontSize:11,fontWeight:600,color:'var(--mu)',marginBottom:5}}>{selDate===TODAY?'Hôm nay 📍':fmt(selDate)}</div>
@@ -395,6 +415,7 @@ function DashboardPage({data,upd,nav,awardXP}){
           </div>)}
           <button className="btn-g btn-sm" style={{marginTop:5,width:'100%',justifyContent:'center'}} onClick={()=>setShowAddEv(true)}>+ Thêm event {fmt(selDate)}</button>
         </div>
+        </>}
       </div>
       <div className="card">
         <div className="lbl" style={{marginBottom:8}}>📊 HIỆU SUẤT</div>

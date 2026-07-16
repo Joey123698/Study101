@@ -579,7 +579,7 @@ function SettingsPage({data,upd}){
     <div className="card" style={{marginBottom:12}}>
       <div className="lbl" style={{marginBottom:8}}>💾 DỮ LIỆU</div>
       <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
-        <button className="btn-g" onClick={()=>{const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`studyos-backup-${TODAY}.json`;a.click();}}>⬇️ Xuất dữ liệu (JSON)</button>
+        <button className="btn-g" onClick={()=>{const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`study101-backup-${TODAY}.json`;a.click();}}>⬇️ Xuất dữ liệu (JSON)</button>
         <button className="btn-g" style={{color:'var(--wa)'}} onClick={()=>{if(confirm('Reset tất cả cài đặt theme về mặc định?')){const ns={theme:'purple',radius:'rounded'};upd({settings:ns});applyTheme(ns);}}}>↺ Reset theme</button>
       </div>
       <div className="tx-dm" style={{marginTop:8}}>Data tự động sync qua Firebase. Xuất JSON để backup thủ công.</div>
@@ -587,7 +587,7 @@ function SettingsPage({data,upd}){
     <div className="card">
       <div className="lbl" style={{marginBottom:8}}>ℹ️ THÔNG TIN</div>
       <div style={{fontSize:12,color:'var(--mu)',lineHeight:1.7}}>
-        StudyOS v11 · React 18 + Firebase<br/>
+        Study101 · React 18 + Firebase<br/>
         Bochum, Đức 🇩🇪 · GSE Program<br/>
         <span style={{color:'var(--dm)',fontSize:10}}>Data lưu trên Firebase — sync real-time mọi thiết bị</span>
       </div>

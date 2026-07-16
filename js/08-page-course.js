@@ -804,6 +804,7 @@ function EditJournalEntryModal({entry,concepts,onSave,onClose}){
    Shows live timer if in_progress, checklist ticking, Kết thúc button. ── */
 function CurrentSessionCard({course,session,journalEntries,onUpdateCourse,upd,data,awardXP,onEdit,onDelete,onFinished}){
   const [showFinish,setShowFinish]=useState(false);
+  const [collapsed,setCollapsed]=useState(false); // thu gọn được, mặc định mở
   const elapsed=useSessionTimer(session);
   const entry=(journalEntries||[]).find(j=>j.id===session.activeJournalEntryId);
   const meta=SESSION_STATUS_META[session.status]||SESSION_STATUS_META.draft;
@@ -817,15 +818,16 @@ function CurrentSessionCard({course,session,journalEntries,onUpdateCourse,upd,da
   const concepts=(course.concepts||[]).filter(c=>(session.conceptIds||[]).includes(c.id));
 
   return<div className="card" style={{marginBottom:10,border:`1.5px solid ${meta.color}55`,background:session.status==='in_progress'&&!isPaused?meta.color+'0d':'var(--card)'}}>
-    <div className="flex-sb" style={{marginBottom:8}}>
-      <div style={{display:'flex',alignItems:'center',gap:7}}>
-        <span style={{fontSize:15}}>{isPaused?'⏸️':meta.emoji}</span>
-        <div>
-          <div style={{fontSize:13,fontWeight:700}}>{session.title}</div>
+    <div className="flex-sb" style={{marginBottom:collapsed?0:8}}>
+      <div style={{display:'flex',alignItems:'center',gap:7,cursor:'pointer',flex:1,minWidth:0}} onClick={()=>setCollapsed(c=>!c)}>
+        <span style={{fontSize:10,color:'var(--dm)',flexShrink:0}}>{collapsed?'▶':'▼'}</span>
+        <span style={{fontSize:15,flexShrink:0}}>{isPaused?'⏸️':meta.emoji}</span>
+        <div style={{minWidth:0}}>
+          <div style={{fontSize:13,fontWeight:700,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{session.title}</div>
           <div className="tx-dm">{isPaused?'Đã tạm dừng':meta.label} · ~{session.estimatedDuration||0} phút{session.currentPosition?` · 📍 ${session.currentPosition}`:''}</div>
         </div>
       </div>
-      <div style={{display:'flex',alignItems:'center',gap:8}}>
+      <div style={{display:'flex',alignItems:'center',gap:8,flexShrink:0}}>
         {session.status==='in_progress'&&<div style={{fontSize:22,fontWeight:800,color:isPaused?'var(--dm)':meta.color,fontFamily:'monospace',fontVariantNumeric:'tabular-nums'}}>{fmtS(elapsed)}</div>}
         {(onEdit||onDelete)&&<div style={{display:'flex',gap:4}}>
           {onEdit&&<button onClick={onEdit} style={{background:'none',border:'none',cursor:'pointer',color:'var(--dm)',fontSize:11,opacity:.5}}>✏️</button>}
@@ -834,7 +836,8 @@ function CurrentSessionCard({course,session,journalEntries,onUpdateCourse,upd,da
       </div>
     </div>
 
-    {objectives.length>0&&<div style={{marginBottom:8}}>
+    {!collapsed&&<>
+    {objectives.length>0&&<div style={{marginTop:8,marginBottom:8}}>
       <div className="tx-dm" style={{marginBottom:3,fontWeight:600}}>🎯 Objectives</div>
       {objectives.map(o=><div key={o.id} style={{fontSize:11,padding:'2px 0'}}>• {o.text}</div>)}
     </div>}
@@ -859,7 +862,9 @@ function CurrentSessionCard({course,session,journalEntries,onUpdateCourse,upd,da
         onBlur={e=>{if(e.target.value!==(session.currentPosition||''))onUpdateCourse({sessions:(course.sessions||[]).map(s=>s.id===session.id?{...s,currentPosition:e.target.value}:s)});}}
         style={{fontSize:12}}/>
     </div>}
+    </>}
 
+    <div style={{marginTop:collapsed?8:0}}>
     {session.status==='planned'&&<button className="btn-p" style={{width:'100%',justifyContent:'center',padding:'10px'}} onClick={()=>startSession(course,session,onUpdateCourse,upd,data,awardXP)}>▶ Bắt đầu học</button>}
     {session.status==='in_progress'&&<div style={{display:'flex',gap:8}}>
       {isPaused
@@ -868,6 +873,7 @@ function CurrentSessionCard({course,session,journalEntries,onUpdateCourse,upd,da
       <button className="btn-p" style={{flex:1,justifyContent:'center',padding:'10px',background:'var(--su)'}} onClick={()=>setShowFinish(true)}>🏁 Kết thúc</button>
     </div>}
     {session.status==='completed'&&<button className="btn-g btn-sm" onClick={()=>markReviewed(course,session,onUpdateCourse)}>🔍 Đánh dấu đã Review</button>}
+    </div>
 
     {showFinish&&<FinishSessionModal session={session} concepts={course.concepts||[]} currentChecklist={entry?.checklist||[]}
       onSave={formData=>{finishSession(course,session,formData,onUpdateCourse,upd,data,awardXP,onFinished);setShowFinish(false);}}
@@ -1170,33 +1176,102 @@ function ChapterEditorModal({chapter,coursePhases,onSave,onClose}){
   </div></div>;}
 
 /* ── Knowledge Notes — upgraded from free-floating Notes: every Note is tied to a Concept ── */
+/* ── v13.1: Knowledge Notes rebuild — 3 things that were stuck:
+   1. Compose box is now a <textarea> so Enter inserts a real line break
+      (Ctrl/Cmd+Enter posts) — display already had whiteSpace:'pre-wrap',
+      only the input side was the single-line bottleneck.
+   2. A note can optionally carry a checklist (mirrors the todos:[{id,text,
+      done}] shape ParkingNotes already uses) — "+ Todo list" while
+      composing adds draft items, saved alongside (or instead of) free text.
+   3. Comments — the data shape (`comments:[]`) was already being stamped
+      onto every note, just never had UI. Each note now has a collapsible
+      thread underneath with its own add/delete. ── */
 function KnowledgeNotesBlock({course,onUpdate}){
   const [text,setText]=useState('');
   const [conceptId,setConceptId]=useState(course.concepts?.[0]?.id||'');
+  const [draftTodos,setDraftTodos]=useState([]); // checklist items being composed, before posting
+  const [commentDrafts,setCommentDrafts]=useState({}); // {noteId: text being typed}
+  const [openComments,setOpenComments]=useState({}); // {noteId: bool}
   const notes=course.notes||[];
   const concepts=course.concepts||[];
   const conceptTitle=(id)=>concepts.find(c=>c.id===id)?.title||'(concept đã xoá)';
-  const add=()=>{if(!text.trim()||!conceptId)return;onUpdate({notes:[{id:uid(),text:text.trim(),date:TODAY,conceptId,comments:[]},...notes]});setText('');};
+
+  const add=()=>{
+    const cleanTodos=draftTodos.filter(t=>t.text.trim());
+    if(!text.trim()&&cleanTodos.length===0)return;
+    if(!conceptId)return;
+    onUpdate({notes:[{id:uid(),text:text.trim(),todos:cleanTodos,date:TODAY,conceptId,comments:[]},...notes]});
+    setText('');setDraftTodos([]);
+  };
   const del=(id)=>onUpdate({notes:notes.filter(n=>n.id!==id)});
+  const togNoteTodo=(noteId,todoId)=>onUpdate({notes:notes.map(n=>n.id===noteId?{...n,todos:(n.todos||[]).map(t=>t.id===todoId?{...t,done:!t.done}:t)}:n)});
+  const addComment=(noteId)=>{
+    const txt=(commentDrafts[noteId]||'').trim();
+    if(!txt)return;
+    onUpdate({notes:notes.map(n=>n.id===noteId?{...n,comments:[...(n.comments||[]),{id:uid(),text:txt,date:TODAY}]}:n)});
+    setCommentDrafts(p=>({...p,[noteId]:''}));
+  };
+  const delComment=(noteId,commentId)=>onUpdate({notes:notes.map(n=>n.id===noteId?{...n,comments:(n.comments||[]).filter(c=>c.id!==commentId)}:n)});
+
   if(concepts.length===0)return null;
   return<div className="card" style={{marginBottom:10}}>
     <div className="lbl" style={{marginBottom:8}}>💬 KNOWLEDGE NOTES</div>
-    <div style={{display:'flex',gap:6,marginBottom:10}}>
-      <select className="sel" value={conceptId} onChange={e=>setConceptId(e.target.value)} style={{maxWidth:150,fontSize:11}}>
+    <div style={{marginBottom:12}}>
+      <select className="sel" value={conceptId} onChange={e=>setConceptId(e.target.value)} style={{maxWidth:220,fontSize:11,marginBottom:6}}>
         {concepts.map(c=><option key={c.id} value={c.id}>{c.title}</option>)}
       </select>
-      <input className="inp" value={text} onChange={e=>setText(e.target.value)} placeholder="Ghi chú / câu hỏi ôn thi cho concept này..." style={{flex:1,fontSize:12}} onKeyDown={e=>e.key==='Enter'&&add()}/>
-      <button className="btn-p btn-sm" onClick={add}>Đăng</button>
+      <textarea value={text} onChange={e=>setText(e.target.value)} placeholder="Ghi chú / câu hỏi ôn thi cho concept này... (Enter xuống dòng, Ctrl+Enter để đăng)"
+        style={{width:'100%',minHeight:56,background:'var(--sur)',border:'1px solid var(--bdr)',borderRadius:7,color:'var(--tx)',fontSize:12,padding:'8px',resize:'vertical',boxSizing:'border-box',outline:'none',fontFamily:'inherit',marginBottom:6}}
+        onKeyDown={e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter')add();}}/>
+      {draftTodos.length>0&&<div style={{marginBottom:6}}>
+        {draftTodos.map((t,i)=><div key={t.id} style={{display:'flex',gap:5,alignItems:'center',marginBottom:3}}>
+          <div style={{width:13,height:13,borderRadius:3,border:'1.5px solid var(--bdr)',flexShrink:0}}/>
+          <input value={t.text} onChange={e=>setDraftTodos(draftTodos.map((x,j)=>j===i?{...x,text:e.target.value}:x))} placeholder={`Việc ${i+1}...`}
+            style={{flex:1,background:'transparent',border:'none',borderBottom:'1px solid var(--bdr)',color:'var(--tx)',fontSize:11,padding:'2px 0',outline:'none'}}
+            autoFocus={i===draftTodos.length-1}/>
+          <button onClick={()=>setDraftTodos(draftTodos.filter((_,j)=>j!==i))} style={{background:'none',border:'none',color:'var(--dm)',cursor:'pointer',fontSize:12}}>×</button>
+        </div>)}
+      </div>}
+      <div className="flex-sb">
+        <button className="btn-g btn-sm" onClick={()=>setDraftTodos([...draftTodos,{id:uid(),text:'',done:false}])}>☑️ + Todo list</button>
+        <button className="btn-p btn-sm" onClick={add}>Đăng</button>
+      </div>
     </div>
     {notes.length===0&&<div className="tx-dm" style={{textAlign:'center',padding:'10px'}}>Chưa có ghi chú nào</div>}
-    {notes.map(n=><div key={n.id} className="note-post">
-      <div className="flex-sb" style={{marginBottom:4}}>
-        <span style={{fontSize:9,background:'var(--acc2)',color:'var(--acc)',borderRadius:4,padding:'1px 6px',fontWeight:600}}>{conceptTitle(n.conceptId)}</span>
-        <button onClick={()=>del(n.id)} style={{background:'none',border:'none',cursor:'pointer',color:'var(--dm)',fontSize:12,opacity:.4}}>×</button>
-      </div>
-      <div style={{fontSize:12,lineHeight:1.5,whiteSpace:'pre-wrap'}}>{n.text}</div>
-      <div className="tx-dm" style={{marginTop:3}}>{fmt(n.date)}</div>
-    </div>)}
+    {notes.map(n=>{
+      const comments=n.comments||[];
+      const commentsOpen=!!openComments[n.id];
+      return<div key={n.id} className="note-post">
+        <div className="flex-sb" style={{marginBottom:4}}>
+          <span style={{fontSize:9,background:'var(--acc2)',color:'var(--acc)',borderRadius:4,padding:'1px 6px',fontWeight:600}}>{conceptTitle(n.conceptId)}</span>
+          <button onClick={()=>del(n.id)} style={{background:'none',border:'none',cursor:'pointer',color:'var(--dm)',fontSize:12,opacity:.4}}>×</button>
+        </div>
+        {n.text&&<div style={{fontSize:12,lineHeight:1.5,whiteSpace:'pre-wrap'}}>{n.text}</div>}
+        {n.todos?.length>0&&<div style={{marginTop:n.text?6:0}}>
+          {n.todos.map(t=><div key={t.id} onClick={()=>togNoteTodo(n.id,t.id)} style={{display:'flex',gap:6,alignItems:'center',padding:'2px 0',cursor:'pointer'}}>
+            <div style={{width:13,height:13,borderRadius:3,border:`1.5px solid ${t.done?'var(--acc)':'var(--bdr)'}`,background:t.done?'var(--acc)':'transparent',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>{t.done&&<span style={{color:'#fff',fontSize:8}}>✓</span>}</div>
+            <span style={{fontSize:11,textDecoration:t.done?'line-through':'none',opacity:t.done?.55:1}}>{t.text}</span>
+          </div>)}
+        </div>}
+        <div className="flex-sb" style={{marginTop:5}}>
+          <div className="tx-dm">{fmt(n.date)}</div>
+          <button onClick={()=>setOpenComments(p=>({...p,[n.id]:!p[n.id]}))} style={{background:'none',border:'none',cursor:'pointer',color:'var(--mu)',fontSize:10}}>💬 {comments.length>0?comments.length:'Bình luận'}</button>
+        </div>
+        {commentsOpen&&<div style={{marginTop:6,paddingTop:6,borderTop:'1px solid var(--bdr)'}}>
+          {comments.map(c=><div key={c.id} style={{display:'flex',gap:6,alignItems:'flex-start',marginBottom:4}}>
+            <div style={{flex:1,fontSize:11,background:'var(--sur)',borderRadius:6,padding:'5px 8px'}}>
+              {c.text}
+              <div style={{fontSize:9,color:'var(--dm)',marginTop:2}}>{fmt(c.date)}</div>
+            </div>
+            <button onClick={()=>delComment(n.id,c.id)} style={{background:'none',border:'none',color:'var(--dm)',cursor:'pointer',fontSize:11,opacity:.4}}>×</button>
+          </div>)}
+          <div style={{display:'flex',gap:5}}>
+            <input className="inp" value={commentDrafts[n.id]||''} onChange={e=>setCommentDrafts(p=>({...p,[n.id]:e.target.value}))}
+              placeholder="Viết bình luận..." style={{flex:1,fontSize:11}} onKeyDown={e=>e.key==='Enter'&&addComment(n.id)}/>
+            <button className="btn-g btn-sm" onClick={()=>addComment(n.id)}>Gửi</button>
+          </div>
+        </div>}
+      </div>;})}
   </div>;}
 
 /* ── Schedule timeline — reads Concept.targetDate (new) or legacyDueDate (migrated), colored by mastery status.
@@ -1226,11 +1301,14 @@ function CalendarDayHeader({days}){
   </div>;}
 
 /* ── One Concept's day-by-day strip. Color rules (priority order):
-   1. Today → green.  2. Weekend → purple (readability aid, applies everywhere).
-   3. Past (before today) → gray.  4. Inside THIS concept's own inferred window
-   → blue if the window has already started (today ≥ windowStart), else
-   yellow (window is still fully in the future). 5. Anything else (future,
-   outside this concept's window) → empty/dim, not this row's business.
+   1. Today → green.  2. Past (before today) → gray.  3. Inside THIS
+   concept's own inferred window → blue if the window has already started
+   (today ≥ windowStart), else yellow (window is still fully in the
+   future) — this now wins over Weekend, per user request: the Phase
+   window needs to stay visible even on Sat/Sun instead of being covered
+   by the weekend tint.  4. Weekend (and not today/past/in-window) →
+   purple, purely a readability aid for the empty cells.  5. Anything else
+   → empty/dim, not this row's business.
 
    v13 caveat, stated plainly: Concepts only ever had a single `targetDate`
    (deadline), never a start date. Rather than block on adding a new field,
@@ -1251,9 +1329,9 @@ function ConceptDayStripRow({concept,days,windowStart,windowEnd,today}){
       const isTarget=d.getTime()===targetDate.getTime();
       let bg='transparent',border='1px solid var(--bdr)';
       if(isToday){bg='var(--su)';border='1px solid var(--su)';}
-      else if(isWeekend){bg='#7C5CBF55';border='1px solid #7C5CBF88';}
       else if(isPast){bg='var(--dm)';border='1px solid var(--dm)';}
       else if(inWindow){bg=windowActive?'var(--in)':'var(--go)';border=`1px solid ${windowActive?'var(--in)':'var(--go)'}`;}
+      else if(isWeekend){bg='#7C5CBF55';border='1px solid #7C5CBF88';}
       return<div key={i} title={fmtL(d)} style={{width:DAY_PX,height:14,boxSizing:'border-box',background:bg,border:isTarget?'2px solid var(--cr)':border,flexShrink:0}}/>;
     })}
   </div>;}
