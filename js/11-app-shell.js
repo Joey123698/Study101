@@ -28,6 +28,7 @@ function App(){
   const [showTimer,setShowTimer]=useState(false);
   const [showQuickNote,setShowQuickNote]=useState(false);
   const [quickNoteText,setQuickNoteText]=useState('');
+  const [quickType,setQuickType]=useState('note'); // 'note' | 'task' — chọn lưu vào Parking Lot Notes hay Tasks
   const [expandedNav,setExpandedNav]=useState({});
   const saveTimer=useRef(null);const saving=useRef(false);const unsubRef=useRef(null);
 
@@ -59,11 +60,17 @@ function App(){
   const signOut=()=>{if(unsubRef.current)unsubRef.current();if(_auth)_auth.signOut();setUser(null);setData(null);};
   const nav=(pg,params={})=>{setPage(pg);setPageParams(params);};
   const togNav=(id)=>setExpandedNav(p=>({...p,[id]:!p[id]}));
-  // Ghi chú nhanh trên header — dump thẳng vào Parking Lot Notes (cùng chỗ
-  // ParkingLotPage đọc/hiển thị), không cần rời trang đang làm để capture ý nghĩ.
+  // Ghi chú nhanh trên header — dump thẳng vào Parking Lot (Notes hoặc Tasks,
+  // tuỳ lựa chọn), không cần rời trang đang làm để capture ý nghĩ.
   const saveQuickNote=()=>{
-    if(!quickNoteText.trim())return;
-    upd({parkingNotes:[{id:uid(),title:'',content:quickNoteText.trim(),color:'#1A2038',noteType:'text',todos:[],date:TODAY},...(data.parkingNotes||[])]});
+    const val=quickNoteText.trim();
+    if(!val)return;
+    if(quickType==='task'){
+      const defaultCat=(data.parkingCategories||['Ý tưởng','Cần làm','Học tập','Khác'])[0]||'Khác';
+      upd({parkingTasks:[{id:uid(),text:val,category:defaultCat,deadline:'',priority:'medium',done:false,status:'todo',date:TODAY},...(data.parkingTasks||[])]});
+    } else {
+      upd({parkingNotes:[{id:uid(),title:'',content:val,color:'#1A2038',noteType:'text',todos:[],date:TODAY},...(data.parkingNotes||[])]});
+    }
     setQuickNoteText('');setShowQuickNote(false);
   };
 
@@ -174,7 +181,7 @@ function App(){
           {page==='courses'&&pageParams.courseId&&<button className="btn-g btn-sm" onClick={()=>nav('courses')} style={{marginLeft:4}}>← Danh sách môn</button>}
         </div>
         <div style={{display:'flex',alignItems:'center',gap:10}}>
-          <button className="btn-g btn-sm" title="Ghi chú nhanh — lưu thẳng vào Parking Lot" onClick={()=>setShowQuickNote(true)} style={{fontSize:13}}>📝</button>
+          <button className="btn-g btn-sm" title="Ghi chú/Task nhanh — lưu thẳng vào Parking Lot" onClick={()=>setShowQuickNote(true)} style={{fontSize:13}}>📝</button>
           <button className="btn-g btn-sm" title="Timer / Pomodoro — cho hoạt động ngoài môn học (tìm việc, đọc sách...)" onClick={()=>setShowTimer(true)} style={{fontSize:13}}>⏱️</button>
           <div style={{fontSize:11,color:'var(--mu)'}}>{new Date().toLocaleDateString('vi-VN',{day:'numeric',month:'numeric',year:'numeric'})}</div>
         </div>
@@ -194,13 +201,21 @@ function App(){
     {showQuickNote&&<div className="ov" onClick={()=>setShowQuickNote(false)}>
       <div className="modal" style={{maxWidth:420}} onClick={e=>e.stopPropagation()}>
         <div className="flex-sb" style={{marginBottom:10}}>
-          <span style={{fontSize:14,fontWeight:600}}>📝 Ghi chú nhanh</span>
+          <span style={{fontSize:14,fontWeight:600}}>📝 Ghi nhanh</span>
           <button className="btn-g btn-sm" onClick={()=>setShowQuickNote(false)}>✕</button>
         </div>
-        <div className="tx-dm" style={{marginBottom:8}}>Lưu thẳng vào 🅿️ Parking Lot → Notes — không cần rời trang đang làm.</div>
-        <textarea autoFocus value={quickNoteText} onChange={e=>setQuickNoteText(e.target.value)} placeholder="Viết gì đó..."
-          style={{width:'100%',minHeight:110,background:'var(--sur)',border:'1px solid var(--bdr)',borderRadius:8,color:'var(--tx)',fontSize:13,padding:'10px',resize:'vertical',boxSizing:'border-box',outline:'none',marginBottom:10,fontFamily:'inherit'}}
-          onKeyDown={e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter')saveQuickNote();}}/>
+        <div className="tx-dm" style={{marginBottom:8}}>Lưu thẳng vào 🅿️ Parking Lot — không cần rời trang đang làm.</div>
+        <div style={{display:'flex',gap:5,marginBottom:8}}>
+          {[['note','📄 Note'],['task','✅ Task']].map(([k,l])=><button key={k} onClick={()=>setQuickType(k)}
+            style={{padding:'5px 12px',borderRadius:7,border:`1.5px solid ${quickType===k?'var(--acc)':'var(--bdr)'}`,background:quickType===k?'var(--acc2)':'transparent',color:quickType===k?'var(--acc)':'var(--mu)',cursor:'pointer',fontSize:12,fontWeight:quickType===k?700:400}}>{l}</button>)}
+        </div>
+        {quickType==='note'
+          ?<textarea autoFocus value={quickNoteText} onChange={e=>setQuickNoteText(e.target.value)} placeholder="Viết gì đó..."
+            style={{width:'100%',minHeight:110,background:'var(--sur)',border:'1px solid var(--bdr)',borderRadius:8,color:'var(--tx)',fontSize:13,padding:'10px',resize:'vertical',boxSizing:'border-box',outline:'none',marginBottom:10,fontFamily:'inherit'}}
+            onKeyDown={e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter')saveQuickNote();}}/>
+          :<input className="inp" autoFocus value={quickNoteText} onChange={e=>setQuickNoteText(e.target.value)} placeholder="Task cần làm..."
+            style={{marginBottom:10,fontSize:13}} onKeyDown={e=>e.key==='Enter'&&saveQuickNote()}/>}
+        {quickType==='task'&&<div className="tx-dm" style={{marginTop:-4,marginBottom:10}}>Vào Parking Lot để thêm deadline/priority sau nếu cần.</div>}
         <div style={{display:'flex',gap:8}}>
           <button className="btn-p" style={{flex:1,justifyContent:'center'}} onClick={saveQuickNote}>Lưu</button>
           <button className="btn-g" onClick={()=>setShowQuickNote(false)}>Huỷ</button>
