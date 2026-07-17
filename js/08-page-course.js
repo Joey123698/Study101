@@ -1036,7 +1036,7 @@ function ConceptRow({concept,color,examDate,data,course,upd,onTouch,onEdit,onDel
         <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:3,cursor:linkedSessions.length>0?'pointer':'default'}} onClick={()=>linkedSessions.length>0&&setShowSessions(s=>!s)}>
           <span style={{fontSize:12,fontWeight:500}}>{concept.title}</span>
           {conf>0&&<span style={{fontSize:9,color:'var(--dm)'}}>{'⭐'.repeat(conf)}</span>}
-          {reviewPriority!=='None'&&reviewPriority!=='Low'&&<span title={rpMeta.label} style={{fontSize:9,background:rpMeta.color+'22',color:rpMeta.color,borderRadius:4,padding:'1px 5px',fontWeight:700}}>{rpMeta.emoji} {rpMeta.label}</span>}
+          {reviewPriority!=='None'&&reviewPriority!=='Low'&&<span title={reviewPriorityLabel(reviewPriority,isTask)} style={{fontSize:9,background:rpMeta.color+'22',color:rpMeta.color,borderRadius:4,padding:'1px 5px',fontWeight:700}}>{rpMeta.emoji} {reviewPriorityLabel(reviewPriority,isTask)}</span>}
           {linkedSessions.length>0&&<span style={{fontSize:9,color:'var(--acc)',background:'var(--acc2)',borderRadius:4,padding:'1px 5px'}}>🔗 {linkedSessions.length} session {showSessions?'▲':'▼'}</span>}
         </div>
         <div style={{display:'flex',alignItems:'center',gap:6}}>

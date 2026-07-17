@@ -127,6 +127,17 @@ const REVIEW_PRIORITY_META={
   'Medium':{emoji:'🟡',color:'var(--wa)',label:'Nên ôn lại'},
   'High':{emoji:'🔴',color:'var(--cr)',label:'Cần ôn gấp'},
 };
+/* ── v13.1: "Cần ôn gấp" (need to urgently REVIEW) doesn't fit a Task-mode
+   Concept (targetTouches set, e.g. IPE's "Thuyết trình" needing 3 Sessions)
+   — there's nothing to review, only Sessions left to finish. Same priority
+   levels/colors/emoji (the urgency signal is still valid), different wording
+   depending on concept mode. Callers that render the label should go through
+   this instead of reading REVIEW_PRIORITY_META[x].label directly. ── */
+const REVIEW_PRIORITY_TASK_LABELS={'Low':'Ưu tiên thấp','Medium':'Nên làm tiếp','High':'Cần hoàn thành gấp'};
+function reviewPriorityLabel(priority,isTask){
+  if(isTask&&REVIEW_PRIORITY_TASK_LABELS[priority])return REVIEW_PRIORITY_TASK_LABELS[priority];
+  return REVIEW_PRIORITY_META[priority]?.label||'';
+}
 function computeReviewPriority(concept,examDate,data){
   const touches=concept.touches||[];
   if(touches.length===0)return 'None'; // nothing to "review" yet — it's Not Started, a different concern

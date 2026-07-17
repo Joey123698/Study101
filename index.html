@@ -4,7 +4,15 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Study101</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📘</text></svg>">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#7C6EF5">
+<!-- iOS chưa hỗ trợ manifest.json đầy đủ (add-to-home-screen, status bar,
+     tên hiển thị) nên vẫn cần khai báo riêng bằng các meta tag apple-*. -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Study101">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Outfit:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@300;400;500;600;700&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="styles.css">
@@ -42,5 +50,12 @@
 <script type="text/babel" src="js/10-page-misc.js"></script>
 <script type="text/babel" src="js/12-decision-engine.js"></script>
 <script type="text/babel" src="js/11-app-shell.js"></script>
+<script>
+// Đăng ký sau khi trang đã load xong, và im lặng bỏ qua nếu lỗi (vd: mở qua
+// file:// lúc dev, hoặc trình duyệt không hỗ trợ) — không được để PWA phá app.
+if('serviceWorker' in navigator){
+  window.addEventListener('load',()=>{navigator.serviceWorker.register('service-worker.js').catch(()=>{});});
+}
+</script>
 </body>
 </html>
