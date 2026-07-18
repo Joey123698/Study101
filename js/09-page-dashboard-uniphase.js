@@ -116,6 +116,7 @@ function DashboardPage({data,upd,nav,awardXP}){
   const [showAddEv,setShowAddEv]=useState(false);
   const [editEv,setEditEv]=useState(null);
   const [eventsOpen,setEventsOpen]=useState(true); // thu gọn được, mặc định xổ ra
+  const [deadlinesOpen,setDeadlinesOpen]=useState(true); // thu gọn được, mặc định xổ ra
   const [showAddAdmin,setShowAddAdmin]=useState(false);
   const [editAdmin,setEditAdmin]=useState(null); // {src,item}
   const [perfDate,setPerfDate]=useState(TODAY);
@@ -297,7 +298,14 @@ function DashboardPage({data,upd,nav,awardXP}){
         </div>;})}
     </div>}
     {(upcomingDeadlines.length>0||overdueDeadlines.length>0)&&<div className="card" style={{marginBottom:10}}>
-      <div className="flex-sb" style={{marginBottom:8}}><div className="lbl" style={{margin:0}}>⏰ DEADLINES (từ tất cả môn học)</div><button className="btn-g btn-sm" onClick={()=>nav('courses')}>Xem môn học →</button></div>
+      <div className="flex-sb" style={{marginBottom:deadlinesOpen?8:0}}>
+        <div style={{display:'flex',alignItems:'center',gap:6,cursor:'pointer'}} onClick={()=>setDeadlinesOpen(o=>!o)}>
+          <span style={{fontSize:10,color:'var(--dm)'}}>{deadlinesOpen?'▼':'▶'}</span>
+          <div className="lbl" style={{margin:0}}>⏰ DEADLINES (từ tất cả môn học)</div>
+        </div>
+        <button className="btn-g btn-sm" onClick={()=>nav('courses')}>Xem môn học →</button>
+      </div>
+      {deadlinesOpen&&<>
       {overdueDeadlines.slice(0,3).map((d,i)=><div key={'o'+i} className="deadline-row">
         <span style={{fontSize:14}}>{d.courseEmoji}</span>
         <div style={{flex:1,minWidth:0}}><div style={{fontSize:12,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{d.label}</div><div className="tx-dm">{d.courseName}</div></div>
@@ -308,6 +316,7 @@ function DashboardPage({data,upd,nav,awardXP}){
         <div style={{flex:1,minWidth:0}}><div style={{fontSize:12,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{d.label}</div><div className="tx-dm">{d.courseName} · {fmt(d.date)}{d.time?` ${d.time}`:''}</div></div>
         <span style={{fontSize:10,color:days<=2?'var(--cr)':days<=5?'var(--wa)':'var(--mu)',fontWeight:700,whiteSpace:'nowrap'}}>{days}N</span>
       </div>;})}
+      </>}
     </div>}
     <div className="g2" style={{marginBottom:10}}>
       <div className="card" style={{borderColor:stale?'var(--waBdr)':'rgba(124,110,245,.3)'}}>
@@ -442,6 +451,19 @@ function DashboardPage({data,upd,nav,awardXP}){
           {[1,2,3,4,5].map(n=><span key={n} className="perf-star" style={{opacity:perf.rating>=n?1:.2}} onClick={()=>saveRating(n)}>⭐</span>)}
         </div>
         {perf.rating&&<div style={{textAlign:'center',fontSize:11,color:'var(--mu)',marginTop:3}}>{['','Cần cố gắng hơn 💪','Khá ổn 👍','Tốt! ✨','Rất tốt! 🎉','Xuất sắc! 🏆'][perf.rating]}</div>}
+        {/* Energy Check — KHÁC với "Đánh giá ngày này" ở trên: cái đó nhìn lại
+           (ngày hôm nay thế nào), cái này là hiện tại (đang có bao nhiêu năng
+           lượng) — dùng để tự cân nhắc nên nhận việc nặng hay nhẹ ngay lúc
+           này. Cố tình chỉ 3 mức, 1 chạm — không phải thang 5 điểm như rating,
+           vì đây là check nhanh có thể làm nhiều lần/ngày, không phải hồi tưởng
+           cuối ngày. */}
+        <div style={{marginTop:9,borderTop:'1px solid var(--bdr)',paddingTop:7}}>
+          <div className="tx-dm" style={{marginBottom:4}}>⚡ Năng lượng lúc này:</div>
+          <div style={{display:'flex',gap:5}}>
+            {[[1,'🔋','Thấp'],[2,'🔋🔋','Vừa'],[3,'🔋🔋🔋','Cao']].map(([n,ic,lb])=><button key={n} onClick={()=>upd({dailyPerf:{...data.dailyPerf,[perfDate]:{...(data.dailyPerf[perfDate]||{}),energy:n}}})}
+              style={{flex:1,padding:'6px 2px',borderRadius:7,border:`1.5px solid ${perf.energy===n?'var(--acc)':'var(--bdr)'}`,background:perf.energy===n?'var(--acc2)':'transparent',color:perf.energy===n?'var(--acc)':'var(--mu)',cursor:'pointer',fontSize:10,fontWeight:perf.energy===n?700:400}}>{ic}<br/>{lb}</button>)}
+          </div>
+        </div>
         <div style={{marginTop:8,borderTop:'1px solid var(--bdr)',paddingTop:7}}>
           <div className="flex-sb"><span className="tx-mu">Tuần này</span><span style={{fontSize:12,color:'#7C6EF5',fontWeight:600}}>{weekH.toFixed(1)}h học</span></div>
         </div>

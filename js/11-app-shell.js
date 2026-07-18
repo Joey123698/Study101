@@ -28,7 +28,10 @@ function App(){
   const [showTimer,setShowTimer]=useState(false);
   const [showQuickNote,setShowQuickNote]=useState(false);
   const [quickNoteText,setQuickNoteText]=useState('');
-  const [quickType,setQuickType]=useState('note'); // 'note' | 'task' — chọn lưu vào Parking Lot Notes hay Tasks
+  const [quickType,setQuickType]=useState('note'); // 'note' | 'task' | 'friction'
+  const [quickCategory,setQuickCategory]=useState('');
+  const [quickDeadline,setQuickDeadline]=useState('');
+  const [quickFrictionTags,setQuickFrictionTags]=useState([]);
   const [expandedNav,setExpandedNav]=useState({});
   const saveTimer=useRef(null);const saving=useRef(false);const unsubRef=useRef(null);
 
@@ -60,19 +63,27 @@ function App(){
   const signOut=()=>{if(unsubRef.current)unsubRef.current();if(_auth)_auth.signOut();setUser(null);setData(null);};
   const nav=(pg,params={})=>{setPage(pg);setPageParams(params);};
   const togNav=(id)=>setExpandedNav(p=>({...p,[id]:!p[id]}));
-  // Ghi chú nhanh trên header — dump thẳng vào Parking Lot (Notes hoặc Tasks,
-  // tuỳ lựa chọn), không cần rời trang đang làm để capture ý nghĩ.
+  // Ghi chú nhanh trên header — dump thẳng vào Parking Lot (Notes hoặc Tasks)
+  // hoặc vào Friction Log, tuỳ lựa chọn — không cần rời trang đang làm.
   const saveQuickNote=()=>{
+    if(quickType==='friction'){
+      if(quickFrictionTags.length===0&&!quickNoteText.trim())return;
+      upd({frictionLog:[{id:uid(),date:TODAY,timestamp:Date.now(),tags:quickFrictionTags,note:quickNoteText.trim()},...(data.frictionLog||[])]});
+      setQuickFrictionTags([]);setQuickNoteText('');setShowQuickNote(false);
+      return;
+    }
     const val=quickNoteText.trim();
     if(!val)return;
     if(quickType==='task'){
-      const defaultCat=(data.parkingCategories||['Ý tưởng','Cần làm','Học tập','Khác'])[0]||'Khác';
-      upd({parkingTasks:[{id:uid(),text:val,category:defaultCat,deadline:'',priority:'medium',done:false,status:'todo',date:TODAY},...(data.parkingTasks||[])]});
+      const cats=data.parkingCategories||['Ý tưởng','Cần làm','Học tập','Khác'];
+      upd({parkingTasks:[{id:uid(),text:val,category:quickCategory||cats[0]||'Khác',deadline:quickDeadline,priority:'medium',done:false,status:'todo',date:TODAY},...(data.parkingTasks||[])]});
+      setQuickDeadline('');
     } else {
       upd({parkingNotes:[{id:uid(),title:'',content:val,color:'#1A2038',noteType:'text',todos:[],date:TODAY},...(data.parkingNotes||[])]});
     }
     setQuickNoteText('');setShowQuickNote(false);
   };
+  const toggleFrictionTag=(tag)=>setQuickFrictionTags(p=>p.includes(tag)?p.filter(t=>t!==tag):[...p,tag]);
 
   if(authLoading)return null;
   if(FB_ON&&fbInitFailed)return<FirebaseErrorScreen/>;
@@ -198,24 +209,44 @@ function App(){
         <TimerPage data={data} upd={upd} awardXP={awardXP} nav={nav}/>
       </div>
     </div>}
-    {showQuickNote&&<div className="ov" onClick={()=>setShowQuickNote(false)}>
-      <div className="modal" style={{maxWidth:420}} onClick={e=>e.stopPropagation()}>
+    {showQuickNote&&<div className="bs-ov" onClick={()=>setShowQuickNote(false)}>
+      <div className="bs-panel" onClick={e=>e.stopPropagation()}>
+        <div className="bs-handle" onClick={()=>setShowQuickNote(false)} title="Đóng"/>
         <div className="flex-sb" style={{marginBottom:10}}>
           <span style={{fontSize:14,fontWeight:600}}>📝 Ghi nhanh</span>
           <button className="btn-g btn-sm" onClick={()=>setShowQuickNote(false)}>✕</button>
         </div>
         <div className="tx-dm" style={{marginBottom:8}}>Lưu thẳng vào 🅿️ Parking Lot — không cần rời trang đang làm.</div>
-        <div style={{display:'flex',gap:5,marginBottom:8}}>
-          {[['note','📄 Note'],['task','✅ Task']].map(([k,l])=><button key={k} onClick={()=>setQuickType(k)}
+        <div style={{display:'flex',gap:5,marginBottom:10,flexWrap:'wrap'}}>
+          {[['note','📄 Note'],['task','✅ Task'],['friction','🚧 Friction']].map(([k,l])=><button key={k} onClick={()=>setQuickType(k)}
             style={{padding:'5px 12px',borderRadius:7,border:`1.5px solid ${quickType===k?'var(--acc)':'var(--bdr)'}`,background:quickType===k?'var(--acc2)':'transparent',color:quickType===k?'var(--acc)':'var(--mu)',cursor:'pointer',fontSize:12,fontWeight:quickType===k?700:400}}>{l}</button>)}
         </div>
-        {quickType==='note'
-          ?<textarea autoFocus value={quickNoteText} onChange={e=>setQuickNoteText(e.target.value)} placeholder="Viết gì đó..."
-            style={{width:'100%',minHeight:110,background:'var(--sur)',border:'1px solid var(--bdr)',borderRadius:8,color:'var(--tx)',fontSize:13,padding:'10px',resize:'vertical',boxSizing:'border-box',outline:'none',marginBottom:10,fontFamily:'inherit'}}
-            onKeyDown={e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter')saveQuickNote();}}/>
-          :<input className="inp" autoFocus value={quickNoteText} onChange={e=>setQuickNoteText(e.target.value)} placeholder="Task cần làm..."
-            style={{marginBottom:10,fontSize:13}} onKeyDown={e=>e.key==='Enter'&&saveQuickNote()}/>}
-        {quickType==='task'&&<div className="tx-dm" style={{marginTop:-4,marginBottom:10}}>Vào Parking Lot để thêm deadline/priority sau nếu cần.</div>}
+
+        {quickType==='note'&&<textarea autoFocus value={quickNoteText} onChange={e=>setQuickNoteText(e.target.value)} placeholder="Viết gì đó..."
+          style={{width:'100%',minHeight:110,background:'var(--sur)',border:'1px solid var(--bdr)',borderRadius:8,color:'var(--tx)',fontSize:13,padding:'10px',resize:'vertical',boxSizing:'border-box',outline:'none',marginBottom:10,fontFamily:'inherit'}}
+          onKeyDown={e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter')saveQuickNote();}}/>}
+
+        {quickType==='task'&&<>
+          <input className="inp" autoFocus value={quickNoteText} onChange={e=>setQuickNoteText(e.target.value)} placeholder="Task cần làm..."
+            style={{marginBottom:8,fontSize:13}} onKeyDown={e=>e.key==='Enter'&&saveQuickNote()}/>
+          <div style={{display:'flex',gap:6,marginBottom:10}}>
+            <select className="sel" value={quickCategory||(data.parkingCategories||['Khác'])[0]} onChange={e=>setQuickCategory(e.target.value)} style={{flex:1,fontSize:12}}>
+              {(data.parkingCategories||['Ý tưởng','Cần làm','Học tập','Khác']).map(c=><option key={c} value={c}>{c}</option>)}
+            </select>
+            <input type="date" className="inp" value={quickDeadline} onChange={e=>setQuickDeadline(e.target.value)} style={{flex:1,fontSize:12}} title="Deadline (tuỳ chọn)"/>
+          </div>
+        </>}
+
+        {quickType==='friction'&&<>
+          <div className="tx-dm" style={{marginBottom:6}}>Chọn nhanh — không cần giải thích dài:</div>
+          <div style={{display:'flex',flexWrap:'wrap',gap:5,marginBottom:8}}>
+            {FRICTION_TAGS.map(tag=><button key={tag} onClick={()=>toggleFrictionTag(tag)}
+              style={{padding:'5px 9px',borderRadius:7,border:`1.5px solid ${quickFrictionTags.includes(tag)?'var(--wa)':'var(--bdr)'}`,background:quickFrictionTags.includes(tag)?'var(--wab)':'transparent',color:quickFrictionTags.includes(tag)?'var(--wa)':'var(--mu)',cursor:'pointer',fontSize:11,fontWeight:quickFrictionTags.includes(tag)?700:400}}>{tag}</button>)}
+          </div>
+          <input className="inp" value={quickNoteText} onChange={e=>setQuickNoteText(e.target.value)} placeholder="Ghi thêm (tuỳ chọn)..."
+            style={{marginBottom:10,fontSize:13}} onKeyDown={e=>e.key==='Enter'&&saveQuickNote()}/>
+        </>}
+
         <div style={{display:'flex',gap:8}}>
           <button className="btn-p" style={{flex:1,justifyContent:'center'}} onClick={saveQuickNote}>Lưu</button>
           <button className="btn-g" onClick={()=>setShowQuickNote(false)}>Huỷ</button>

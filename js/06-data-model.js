@@ -94,6 +94,7 @@ function migrateToV6(d){
   if(!d.parkingTasks){d.parkingTasks=(d.parkingLot||[]).map(p=>({...p,category:'Khác',deadline:'',done:false}));}
   if(!d.parkingNotes)d.parkingNotes=[];
   if(!d.parkingCategories)d.parkingCategories=['Ý tưởng','Cần làm','Học tập','Công việc','Khác'];
+  if(!d.frictionLog)d.frictionLog=[]; // v13.1: quick-select friction capture, see FRICTION_TAGS
   if(d.events)d.events=d.events.map(e=>({...e,shortLabel:e.shortLabel||'',recurring:e.recurring||false,recurringDow:e.recurringDow||[],recurringEndDate:e.recurringEndDate||''}));
   if(d.courses)d.courses=d.courses.map(c=>({...c,topics:(c.topics||[]).map(t=>({...t,subtasks:(t.subtasks||[]).map(s=>({...s,dueDate:s.dueDate||''}))}))}));
   if(!d.studyJournal)d.studyJournal=[];

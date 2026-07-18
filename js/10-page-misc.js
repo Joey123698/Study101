@@ -902,6 +902,40 @@ function ParkingLotPage({data,upd}){
    Course Detail, so state (persisted via session.activeStartedAt) stays
    consistent no matter where you started or navigate to.
    ══════════════════════════════════════════════════════════════ */
+/* ── Friction Log review — collapsed by default (supplementary, not part of
+   the core daily flow), only renders once there's at least 1 entry so it
+   never adds empty clutter to a page someone opens every day. ── */
+function FrictionLogWidget({data,upd}){
+  const [open,setOpen]=useState(false);
+  const log=(data.frictionLog||[]).slice().sort((a,b)=>b.timestamp-a.timestamp);
+  if(log.length===0)return null;
+  const recent=log.slice(0,8);
+  const del=(id)=>upd({frictionLog:(data.frictionLog||[]).filter(e=>e.id!==id)});
+  const last7=log.filter(e=>daysTo(e.date)>=-7);
+  const tagCounts={};
+  last7.forEach(e=>(e.tags||[]).forEach(t=>tagCounts[t]=(tagCounts[t]||0)+1));
+  const topTag=Object.entries(tagCounts).sort((a,b)=>b[1]-a[1])[0];
+  return<div className="card" style={{marginBottom:14}}>
+    <div className="flex-sb" style={{marginBottom:open?8:0,cursor:'pointer'}} onClick={()=>setOpen(o=>!o)}>
+      <div style={{display:'flex',alignItems:'center',gap:6}}>
+        <span style={{fontSize:10,color:'var(--dm)'}}>{open?'▼':'▶'}</span>
+        <span className="lbl" style={{margin:0}}>🚧 FRICTION LOG</span>
+        <span className="tx-dm">({log.length} lần ghi)</span>
+      </div>
+      {topTag&&<span style={{fontSize:10,color:'var(--wa)'}}>7 ngày qua: {topTag[0]} ×{topTag[1]}</span>}
+    </div>
+    {open&&<div>
+      {recent.map(e=><div key={e.id} style={{padding:'6px 0',borderBottom:'1px solid var(--bdr)'}}>
+        <div className="flex-sb">
+          <div style={{display:'flex',flexWrap:'wrap',gap:4}}>{(e.tags||[]).map(t=><span key={t} style={{fontSize:10,background:'var(--wab)',color:'var(--wa)',borderRadius:5,padding:'1px 6px'}}>{t}</span>)}</div>
+          <button onClick={()=>del(e.id)} style={{background:'none',border:'none',cursor:'pointer',color:'var(--dm)',fontSize:12,opacity:.35}}>×</button>
+        </div>
+        {e.note&&<div style={{fontSize:11,color:'var(--mu)',marginTop:3}}>{e.note}</div>}
+        <div className="tx-dm" style={{marginTop:2}}>{fmtL(e.date)}</div>
+      </div>)}
+    </div>}
+  </div>;}
+
 function StudyJournalPage({data,upd,awardXP}){
   const courses=data.courses.filter(c=>!c.archived);
   const [pickedCourseId,setPickedCourseId]=useState(courses[0]?.id||'');
@@ -965,6 +999,8 @@ function StudyJournalPage({data,upd,awardXP}){
   return<div>
     <div className="h1" style={{marginBottom:4}}>📓 Nhật ký học</div>
     <p className="tx-mu" style={{marginBottom:14}}>Mỗi buổi học là 1 Journal Entry, gắn với 1 Session cụ thể. Analytics đọc từ đây, không đọc % thủ công.</p>
+
+    <FrictionLogWidget data={data} upd={upd}/>
 
     {globalInProgress&&<div style={{marginBottom:14}}>
       <div className="lbl" style={{marginBottom:6}}>▶️ ĐANG HỌC ({globalInProgress.course.emoji} {globalInProgress.course.name})</div>

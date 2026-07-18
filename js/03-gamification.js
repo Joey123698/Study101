@@ -7,5 +7,9 @@ const ACH=[{id:'first_log',emoji:'📝',name:'First Log',desc:'Log buổi học 
 const XPR={habit:10,hour:15,concept_eval:15,task:5,focus:10,session_complete:20};
 const RISK={critical:{label:'KHẨN CẤP',cls:'risk-cr',c:'#E24B4A'},watch:{label:'CHÚ Ý',cls:'risk-wa',c:'#BA7517'},medium:{label:'TB',cls:'risk-in',c:'#378ADD'},good:{label:'ỔN',cls:'risk-su',c:'#1D9E75'}};
 const PAL=['#7C6EF5','#E24B4A','#BA7517','#378ADD','#1D9E75','#D4537E','#26C6DA','#F5A623'];
+/* ── Friction Log quick-select tags — chip-based, không phải free-text bắt
+   buộc, đúng tinh thần "quick-select trước khi build" đã bàn: chọn nhanh lý
+   do phổ biến, note chỉ là tuỳ chọn thêm nếu muốn. ── */
+const FRICTION_TAGS=['😵 Mất tập trung','🔋 Hết năng lượng','❓ Không rõ phải làm gì','🔔 Bị gián đoạn','😩 Trì hoãn','📱 Xao nhãng điện thoại','😰 Quá tải','🤷 Khác'];
 function showXpPop(n){const el=document.createElement('div');el.className='xp-pop';el.textContent=`+${n} XP`;document.body.appendChild(el);setTimeout(()=>{if(el.parentNode)el.parentNode.removeChild(el);},2000);}
 function showAch(a){const el=document.createElement('div');el.className='ach-pop';el.innerHTML=`<div style="font-size:10px;opacity:.8;margin-bottom:3px">🏆 THÀNH TÍCH MỚI!</div><div style="font-size:17px;margin-bottom:3px">${a.emoji} ${a.name}</div><div style="font-size:11px;opacity:.8">${a.desc}</div>`;document.body.appendChild(el);setTimeout(()=>{if(el.parentNode)el.parentNode.removeChild(el);},4000);}
