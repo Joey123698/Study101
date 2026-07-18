@@ -18,15 +18,23 @@ function QuickLangInput({data,upd}){
         return{...l,categories:cats};
       });
       upd({languages:langs});
+    } else if(selCat==='grammar'||selCat==='speaking'){
+      if(!text.trim())return;
+      // Grammar/Speaking are Concepts now (reuse mastery/touches engine) — quick-add
+      // here just creates the Concept with 0 touches; rating happens on Language page.
+      const langs=data.languages.map(l=>{
+        if(l.id!==selLang)return l;
+        const nc={id:uid(),title:text.trim(),skill:selCat,legacyLevel:selCat==='grammar'?'B1':'',touches:[],objectiveIds:[],prerequisiteConceptIds:[]};
+        return{...l,concepts:[nc,...(l.concepts||[])]};
+      });
+      upd({languages:langs});setText('');
     } else {
       if(!text.trim())return;
       const langs=data.languages.map(l=>{
         if(l.id!==selLang)return l;
         const cats={...(l.categories||defCats())};
         const catD={...(cats[selCat]||{items:[]})};
-        const ni={id:uid(),text:text.trim(),done:false};
-        if(selCat==='writing')ni.link='';
-        if(selCat==='grammar')ni.level='B1';
+        const ni={id:uid(),text:text.trim(),done:false,link:'',score:null,feedback:''};
         catD.items=[ni,...(catD.items||[])];
         cats[selCat]=catD;
         return{...l,categories:cats};
@@ -483,6 +491,7 @@ function UniPhasePage({data,upd}){
   const [eg,setEg]=useState(null);
   const [milestoneEdit,setMilestoneEdit]=useState(null); // {phId, index|null}
   const updG=(phId,gId,v)=>upd({uniPhases:data.uniPhases.map(p=>p.id===phId?{...p,goals:p.goals.map(g=>g.id===gId?{...g,progress:v}:g)}:p)});
+  const updGoalMeta=(phId,gId,changes)=>upd({uniPhases:data.uniPhases.map(p=>p.id===phId?{...p,goals:p.goals.map(g=>g.id===gId?{...g,...changes}:g)}:p)});
 
   const computeGPA=()=>{
     const graded=data.courses.filter(c=>c.grade!=null&&!isNaN(c.grade));
@@ -492,30 +501,33 @@ function UniPhasePage({data,upd}){
     return{avg:weighted/totalEcts,gradedCount:graded.length,totalCount:data.courses.filter(c=>!c.archived).length};
   };
 
-  const computeGermanProgress=(data)=>{
-    const de=data.languages.find(l=>l.id==='de');if(!de)return{pct:0,detail:[]};
-    const cats=de.categories||defCats();
+  const computeLanguageProgress=(data,langId,targetLevel)=>{
+    const lang=data.languages.find(l=>l.id===langId);
+    if(!lang)return{pct:0,vocab:0,vocabTarget:CEFR_VOCAB[targetLevel]||CEFR_VOCAB.B2,vocabPct:0,grPct:0,grCount:0,grMastered:0,spPct:0,spCount:0,spMastered:0,wrDone:0,wrTotal:0,wrPct:0,byLevel:{}};
+    const cats=lang.categories||defCats();
+    const concepts=lang.concepts||[];
     const vocab=cats.vocabulary?.total||0;
-    const grammarItems=cats.grammar?.items||[];
-    const speakingItems=cats.speaking?.items||[];
+    const vocabTarget=CEFR_VOCAB[targetLevel]||CEFR_VOCAB.B2;
+    const vocabPct=Math.min(100,Math.round(vocab/vocabTarget*100));
+    const grammarConcepts=concepts.filter(c=>c.skill==='grammar');
+    const speakingConcepts=concepts.filter(c=>c.skill==='speaking');
+    const avgMastery=(cs)=>cs.length?Math.round(cs.reduce((s,c)=>s+calcProgress(c,data),0)/cs.length):0;
+    const grPct=avgMastery(grammarConcepts);
+    const spPct=avgMastery(speakingConcepts);
+    const grMastered=grammarConcepts.filter(c=>deriveConceptStatus(c,null,data)==='Mastered').length;
+    const spMastered=speakingConcepts.filter(c=>deriveConceptStatus(c,null,data)==='Mastered').length;
     const writingItems=cats.writing?.items||[];
-    // Score: vocab vs B2 (4000 words) + grammar completion + speaking + writing
-    const vocabPct=Math.min(100,Math.round(vocab/4000*100));
-    const grTotal=grammarItems.length||1;const grDone=grammarItems.filter(g=>g.done).length;
-    const grPct=Math.round(grDone/grTotal*100);
-    const spTotal=speakingItems.length||1;const spDone=speakingItems.filter(s=>s.done).length;
-    const spPct=Math.round(spDone/spTotal*100);
     const wrTotal=writingItems.length||1;const wrDone=writingItems.filter(w=>w.done).length;
     const wrPct=Math.round(wrDone/wrTotal*100);
-    const overall=Math.round((vocabPct*0.4+grPct*0.3+spPct*0.2+wrPct*0.1));
-    // Grammar by CEFR level
+    const overall=Math.round(vocabPct*0.4+grPct*0.3+spPct*0.2+wrPct*0.1);
+    // Grammar breakdown by CEFR level tag (legacyLevel) — same display purpose as before
     const byLevel={};
-    grammarItems.forEach(g=>{const lv=g.level||'?';if(!byLevel[lv])byLevel[lv]={total:0,done:0};byLevel[lv].total++;if(g.done)byLevel[lv].done++;});
-    return{pct:overall,vocab,vocabPct,grDone,grTotal,grPct,spDone,spTotal,spPct,wrDone,wrTotal,wrPct,byLevel};
+    grammarConcepts.forEach(c=>{const lv=c.legacyLevel||'?';if(!byLevel[lv])byLevel[lv]={total:0,mastered:0};byLevel[lv].total++;if(deriveConceptStatus(c,null,data)==='Mastered')byLevel[lv].mastered++;});
+    return{pct:overall,vocab,vocabTarget,vocabPct,grPct,grCount:grammarConcepts.length,grMastered,spPct,spCount:speakingConcepts.length,spMastered,wrDone,wrTotal,wrPct,byLevel};
   };
 
   const autoP=(goal,data)=>{
-    if(goal.linkedTo==='german_hours'||goal.linkedTo==='german_cefr'){return computeGermanProgress(data).pct;}
+    if(goal.linkedTo==='language_cefr'){return computeLanguageProgress(data,goal.languageId||'de',goal.targetLevel||'B2').pct;}
     if(goal.linkedTo==='events_attended'){return Math.min(100,data.events.filter(e=>e.date<TODAY&&e.type==='networking').length*20);}
     return null;
   };
@@ -568,22 +580,24 @@ function UniPhasePage({data,upd}){
             </div>;
           }
           const auto=isA?autoP(g,data):null;
-          const isGerman=g.linkedTo==='german_hours'||g.linkedTo==='german_cefr';
-          const deDetail=isA&&isGerman?computeGermanProgress(data):null;
+          const isLangGoal=g.linkedTo==='language_cefr';
+          const lang=isLangGoal?data.languages.find(l=>l.id===(g.languageId||'de')):null;
+          const deDetail=isA&&isLangGoal?computeLanguageProgress(data,g.languageId||'de',g.targetLevel||'B2'):null;
           return<div key={g.id} style={{marginBottom:10,background:'var(--sur)',borderRadius:8,padding:'9px'}}>
-            <div className="flex-sb" style={{marginBottom:4}}><div style={{fontSize:12,fontWeight:500}}><span style={{marginRight:5}}>{g.icon}</span>{g.text}</div>
+            <div className="flex-sb" style={{marginBottom:4}}><div style={{fontSize:12,fontWeight:500}}><span style={{marginRight:5}}>{g.icon}</span>{g.text}{isLangGoal&&<span style={{marginLeft:6,fontSize:9,background:ph.color+'22',color:ph.color,borderRadius:4,padding:'1px 5px',fontWeight:700}}>{lang?.emoji} → {g.targetLevel}</span>}</div>
               <div style={{display:'flex',alignItems:'center',gap:5}}>
-                <span style={{fontSize:12,color:ph.color,fontWeight:600}}>{isGerman&&deDetail?deDetail.pct:g.progress}%</span>
-                {isA&&!isGerman&&<button className="btn-g btn-sm" onClick={()=>setEg({phId:ph.id,gId:g.id,v:g.progress})}>Sửa</button>}
+                <span style={{fontSize:12,color:ph.color,fontWeight:600}}>{isLangGoal&&deDetail?deDetail.pct:g.progress}%</span>
+                {isA&&<button className="btn-g btn-sm" onClick={()=>setEg(isLangGoal?{phId:ph.id,gId:g.id,languageId:g.languageId||'de',targetLevel:g.targetLevel||'B2'}:{phId:ph.id,gId:g.id,v:g.progress})}>Sửa</button>}
               </div>
             </div>
-            <Bar v={isGerman&&deDetail?deDetail.pct:g.progress} color={ph.color} h={6}/>
-            {/* German B2+ sub-goals breakdown */}
+            <Bar v={isLangGoal&&deDetail?deDetail.pct:g.progress} color={ph.color} h={6}/>
+            {/* Language sub-goals breakdown — vocab measured against THIS goal's targetLevel,
+               grammar/speaking now real Concept mastery (not a checklist ratio) */}
             {deDetail&&<div style={{marginTop:8,display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
               <div style={{background:'var(--card)',borderRadius:6,padding:'7px 9px'}}>
                 <div style={{fontSize:10,color:'var(--mu)',marginBottom:4,fontWeight:700}}>📝 TỪ VỰNG</div>
                 <div style={{fontSize:16,fontWeight:700,color:ph.color}}>{deDetail.vocab}</div>
-                <div className="tx-dm" style={{marginBottom:4}}>từ đã học</div>
+                <div className="tx-dm" style={{marginBottom:4}}>/ {deDetail.vocabTarget} từ ({g.targetLevel})</div>
                 <Bar v={deDetail.vocabPct} color={ph.color} h={4}/>
                 <div style={{display:'flex',justifyContent:'space-between',marginTop:3}}>
                   {Object.entries(CEFR_VOCAB).slice(0,4).map(([lv,min])=><span key={lv} style={{fontSize:9,color:deDetail.vocab>=min?ph.color:'var(--dm)',fontWeight:deDetail.vocab>=min?700:400}}>{lv}{deDetail.vocab>=min?'✓':''}</span>)}
@@ -591,17 +605,17 @@ function UniPhasePage({data,upd}){
               </div>
               <div style={{background:'var(--card)',borderRadius:6,padding:'7px 9px'}}>
                 <div style={{fontSize:10,color:'var(--mu)',marginBottom:4,fontWeight:700}}>📖 NGỮ PHÁP</div>
-                <div style={{fontSize:16,fontWeight:700,color:ph.color}}>{deDetail.grDone}/{deDetail.grTotal}</div>
-                <div className="tx-dm" style={{marginBottom:4}}>điểm ngữ pháp ✓</div>
+                <div style={{fontSize:16,fontWeight:700,color:ph.color}}>{deDetail.grMastered}/{deDetail.grCount}</div>
+                <div className="tx-dm" style={{marginBottom:4}}>điểm đã thành thạo</div>
                 <Bar v={deDetail.grPct} color={ph.color} h={4}/>
                 {Object.entries(deDetail.byLevel).length>0&&<div style={{marginTop:4,display:'flex',gap:4,flexWrap:'wrap'}}>
-                  {Object.entries(deDetail.byLevel).map(([lv,d])=><span key={lv} style={{fontSize:9,padding:'1px 5px',borderRadius:8,background:d.done===d.total?ph.color+'33':'var(--sur)',color:d.done===d.total?ph.color:'var(--dm)',border:`1px solid ${d.done===d.total?ph.color+'55':'var(--bdr)'}`}}>{lv}: {d.done}/{d.total}</span>)}
+                  {Object.entries(deDetail.byLevel).map(([lv,d])=><span key={lv} style={{fontSize:9,padding:'1px 5px',borderRadius:8,background:d.mastered===d.total?ph.color+'33':'var(--sur)',color:d.mastered===d.total?ph.color:'var(--dm)',border:`1px solid ${d.mastered===d.total?ph.color+'55':'var(--bdr)'}`}}>{lv}: {d.mastered}/{d.total}</span>)}
                 </div>}
               </div>
               <div style={{background:'var(--card)',borderRadius:6,padding:'7px 9px'}}>
                 <div style={{fontSize:10,color:'var(--mu)',marginBottom:4,fontWeight:700}}>🗣️ NÓI</div>
-                <div style={{fontSize:16,fontWeight:700,color:ph.color}}>{deDetail.spDone}/{deDetail.spTotal}</div>
-                <div className="tx-dm" style={{marginBottom:4}}>topics đã luyện</div>
+                <div style={{fontSize:16,fontWeight:700,color:ph.color}}>{deDetail.spMastered}/{deDetail.spCount}</div>
+                <div className="tx-dm" style={{marginBottom:4}}>topics đã thành thạo</div>
                 <Bar v={deDetail.spPct} color={ph.color} h={4}/>
               </div>
               <div style={{background:'var(--card)',borderRadius:6,padding:'7px 9px'}}>
@@ -611,20 +625,31 @@ function UniPhasePage({data,upd}){
                 <Bar v={deDetail.wrPct} color={ph.color} h={4}/>
               </div>
             </div>}
-            {auto!==null&&!isGerman&&<div style={{marginTop:5,display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
+            {auto!==null&&!isLangGoal&&<div style={{marginTop:5,display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
               <span style={{fontSize:10,color:'var(--mu)'}}>💡 Gợi ý: <strong style={{color:ph.color}}>{auto}%</strong></span>
               {auto!==g.progress&&<button className="btn-p" style={{padding:'2px 8px',fontSize:10,borderRadius:5}} onClick={()=>updG(ph.id,g.id,auto)}>Áp dụng</button>}
             </div>}
-            {isGerman&&<div style={{fontSize:10,color:'var(--dm)',marginTop:4}}>📊 Tự tính từ Language tab · 40% vocab + 30% ngữ pháp + 20% nói + 10% viết</div>}
-            {!isGerman&&<div style={{fontSize:10,color:'var(--dm)',marginTop:3}}>📊 {g.hint}</div>}
+            {isLangGoal&&<div style={{fontSize:10,color:'var(--dm)',marginTop:4}}>📊 Tự tính từ Language tab · 40% vocab + 30% ngữ pháp + 20% nói + 10% viết — mốc {g.targetLevel}</div>}
+            {!isLangGoal&&<div style={{fontSize:10,color:'var(--dm)',marginTop:3}}>📊 {g.hint}</div>}
             {(data.habits||[]).filter(h=>!h.archived&&h.goalId===g.id).length>0&&<div style={{marginTop:6,paddingTop:6,borderTop:'1px solid var(--bdr)',display:'flex',gap:6,flexWrap:'wrap'}}>
               {(data.habits||[]).filter(h=>!h.archived&&h.goalId===g.id).map(h=>{const done=h.completions[TODAY];const str=hStreak(h.completions);
                 return<span key={h.id} style={{fontSize:9,display:'flex',alignItems:'center',gap:3,background:done?h.color+'22':'var(--card)',color:done?h.color:'var(--mu)',border:`1px solid ${done?h.color+'55':'var(--bdr)'}`,borderRadius:5,padding:'2px 6px'}}>{h.emoji} {h.name}{str>0&&` 🔥${str}`}</span>;})}
             </div>}
-            {eg?.gId===g.id&&<div style={{marginTop:7,display:'flex',gap:5,alignItems:'center'}}>
+            {eg?.gId===g.id&&!isLangGoal&&<div style={{marginTop:7,display:'flex',gap:5,alignItems:'center'}}>
               <input type="range" min={0} max={100} step={5} value={eg.v} onChange={e=>setEg(p=>({...p,v:+e.target.value}))} style={{flex:1}}/>
               <span style={{fontSize:12,color:'var(--acc)',fontWeight:600,minWidth:30}}>{eg.v}%</span>
               <button className="btn-p btn-sm" onClick={()=>{updG(eg.phId,eg.gId,eg.v);setEg(null);}}>OK</button>
+              <button className="btn-g btn-sm" onClick={()=>setEg(null)}>✕</button>
+            </div>}
+            {eg?.gId===g.id&&isLangGoal&&<div style={{marginTop:7,display:'flex',gap:5,alignItems:'center',flexWrap:'wrap'}}>
+              <select className="sel" value={eg.languageId} onChange={e=>setEg(p=>({...p,languageId:e.target.value}))} style={{fontSize:11}}>
+                {data.languages.map(l=><option key={l.id} value={l.id}>{l.emoji} {l.name}</option>)}
+              </select>
+              <span className="tx-dm">→ mục tiêu</span>
+              <select className="sel" value={eg.targetLevel} onChange={e=>setEg(p=>({...p,targetLevel:e.target.value}))} style={{fontSize:11}}>
+                {CEFR_LEVELS.map(lv=><option key={lv} value={lv}>{lv}</option>)}
+              </select>
+              <button className="btn-p btn-sm" onClick={()=>{updGoalMeta(eg.phId,eg.gId,{languageId:eg.languageId,targetLevel:eg.targetLevel});setEg(null);}}>OK</button>
               <button className="btn-g btn-sm" onClick={()=>setEg(null)}>✕</button>
             </div>}
           </div>;

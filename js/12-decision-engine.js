@@ -121,7 +121,23 @@ function computeNextAction(data){
       reason:`"${concept.title}" đang cần ôn gấp (Review Priority cao) và chưa có Session nào phủ.`};
   }
 
-  // Rule 5 — Language (tín hiệu nhẹ): chỉ xét khi không còn gì cấp bách hơn ở
+  // Rule 5 — Language review: bất kỳ Concept ngữ pháp/nói/vocab-batch nào
+  // đang Review Priority High. Dùng CHUNG weakConcepts() với Course (chỉ đổi
+  // entity truyền vào — nó chỉ cần .concepts và .examDate, Language không có
+  // examDate nên examUrgency tự về 0, không cần sửa gì ở mastery-engine).
+  // Ưu tiên hơn Rule 6 bên dưới vì cụ thể, hành động được ngay, thay vì một
+  // nhắc nhở chung chung "chưa ghi gì hôm nay".
+  const langReviewCandidates=[];
+  (data.languages||[]).forEach(lang=>{
+    weakConcepts(lang,data).forEach(concept=>langReviewCandidates.push({lang,concept}));
+  });
+  if(langReviewCandidates.length>0){
+    const{lang,concept}=langReviewCandidates[0];
+    return{kind:'language_review',lang,concept,
+      reason:`"${concept.title}" (${lang.name}) lâu chưa ôn — Review Priority cao.`};
+  }
+
+  // Rule 6 — Language (tín hiệu nhẹ): chỉ xét khi không còn gì cấp bách hơn ở
   // trên. Ngôn ngữ nào hôm nay CHƯA ghi log gì (chưa điểm danh, chưa ghi phút
   // tự học) thì gợi ý nhẹ — không thay thế tracking chi tiết ở trang Ngôn
   // ngữ, chỉ là Decision Engine giờ "biết" ngôn ngữ tồn tại, đúng góp ý đã
@@ -135,7 +151,7 @@ function computeNextAction(data){
     return{kind:'language',lang,reason:`Hôm nay chưa ghi gì cho ${lang.name} — dành ít phút cũng được.`};
   }
 
-  // Rule 6 — Fallback: không có gì khẩn cấp.
+  // Rule 7 — Fallback: không có gì khẩn cấp.
   return{kind:'idle',reason:'Không có gì gấp lúc này — bạn có thể tự chọn việc muốn làm.'};
 }
 
@@ -153,9 +169,19 @@ function NextActionBanner({data,upd,awardXP,nav,onlyCourseId}){
     <span style={{fontSize:12,color:'var(--mu)'}}>✅ {next.reason}</span>
   </div>;
 
-  // 'language' has no `course` (uses `lang` instead) — handle as its own early
-  // return, same reason 'idle' is handled above this line, before `next.course`
-  // gets destructured unconditionally for every other kind.
+  // 'language' and 'language_review' have no `course` (use `lang` instead) —
+  // handle both as their own early return, same reason 'idle' is handled
+  // above this line, before `next.course` gets destructured unconditionally
+  // for every other kind.
+  if(next.kind==='language_review'){
+    const{lang,concept}=next;
+    return<div className="card" style={{marginBottom:10,border:`1.5px solid ${lang.color}55`,background:lang.color+'0d'}}>
+      <div style={{fontSize:10,fontWeight:700,color:lang.color,marginBottom:4,letterSpacing:'.03em'}}>📍 TIẾP THEO</div>
+      <div style={{fontSize:13,fontWeight:600,marginBottom:2}}>{lang.emoji} {concept.title}</div>
+      <div style={{fontSize:11,color:'var(--mu)',marginBottom:8}}>{next.reason}</div>
+      {nav&&<button className="btn-p" style={{width:'100%',justifyContent:'center'}} onClick={()=>nav('language')}>→ Vào Ngôn ngữ để ôn</button>}
+    </div>;
+  }
   if(next.kind==='language'){
     const{lang}=next;
     return<div className="card" style={{marginBottom:10,border:`1.5px solid ${lang.color}55`,background:lang.color+'0d'}}>

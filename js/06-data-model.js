@@ -197,6 +197,72 @@ function migrateToV12(d){
     alpha:undefined,
   };
 
+  // 5. v13.1 Language module rebuild — per approved spec (StudyOS tracks
+  //    PROCESS, not content; OneNote stays the single knowledge source).
+  //    Grammar & Speaking become Concepts, reusing the EXACT SAME touches/EMA
+  //    mastery + Review Priority engine Course already uses — a grammar
+  //    point or a speaking topic genuinely benefits from "how well do I
+  //    still remember this", which is exactly what touches already model.
+  //    Vocabulary's simple +N counter is left untouched ON PURPOSE — it's
+  //    the lowest-friction path for daily logging, and forcing every word
+  //    through a Concept rating would fight the whole point (ADHD-friendly
+  //    quick capture > completeness). Writing stays a task list — essays
+  //    are one-off deliverables, not a "review repeatedly" skill — just
+  //    gains score/feedback fields. Old checklist items are preserved inert
+  //    under legacyGrammarItems/legacySpeakingItems, never deleted, per this
+  //    file's own convention.
+  if(d.languages)d.languages=d.languages.map(l=>{
+    if(l.concepts)return l; // already migrated
+    const cats=l.categories||defCats();
+    const grammarItems=cats.grammar?.items||[];
+    const speakingItems=cats.speaking?.items||[];
+    const writingItems=cats.writing?.items||[];
+    const n=grammarItems.length+speakingItems.length;
+    let idx=0;
+    const toConcept=(item,skill)=>{
+      idx++;
+      return{
+        id:'lc_'+l.id+'_'+skill+'_'+item.id,
+        title:item.text,skill,
+        legacyLevel:item.level||'', // grammar's old CEFR tag — kept for display only
+        touches:item.done?[{understanding:4,confidence:4,timestamp:Date.now()-((n-idx)*86400000),sessionId:null,legacy:true}]:[],
+        objectiveIds:[],prerequisiteConceptIds:[],
+      };
+    };
+    const concepts=[
+      ...grammarItems.map(it=>toConcept(it,'grammar')),
+      ...speakingItems.map(it=>toConcept(it,'speaking')),
+    ];
+    const writing={items:writingItems.map(it=>({...it,score:it.score??null,feedback:it.feedback??''}))};
+    return{...l,concepts,categories:{...cats,writing},legacyGrammarItems:grammarItems,legacySpeakingItems:speakingItems};
+  });
+
+  // 5b. Uni Phase goals — the old German-only, target-blind auto-link
+  //     ('german_hours'/'german_cefr', always measured against a hard-coded
+  //     B2/4000-word yardstick) becomes languageId + targetLevel per goal —
+  //     so two Phases tracking the SAME language toward two DIFFERENT
+  //     targets (Phase 1 → B2, Phase 2 → C1) each show their own honest %,
+  //     without the underlying vocab/grammar/speaking data ever resetting
+  //     or duplicating between phases. Best-effort infers targetLevel from
+  //     the goal's own label first (so seed data "German Recovery B2+" and
+  //     "German → C1" resolve correctly on their own), falling back to the
+  //     language's current `target` text, then a hard 'B2' default — always
+  //     editable by hand afterward via the goal editor.
+  const inferTargetLevel=(str)=>{
+    if(!str)return null;
+    return CEFR_LEVELS.slice().reverse().find(lv=>str.includes(lv))||null;
+  };
+  if(d.uniPhases)d.uniPhases=d.uniPhases.map(p=>({
+    ...p,
+    goals:(p.goals||[]).map(g=>{
+      if(g.linkedTo!=='german_hours'&&g.linkedTo!=='german_cefr'&&g.linkedTo!=='language_cefr')return g;
+      if(g.linkedTo==='language_cefr'&&g.targetLevel)return g; // already migrated
+      const lang=(d.languages||[]).find(x=>x.id===(g.languageId||'de'));
+      const targetLevel=g.targetLevel||inferTargetLevel(g.text)||inferTargetLevel(lang?.target)||'B2';
+      return{...g,linkedTo:'language_cefr',languageId:g.languageId||'de',targetLevel};
+    }),
+  }));
+
   return d;
 }
 

@@ -6,7 +6,6 @@
 function LanguagePage({data,upd}){
   const [weekOffset,setWeekOffset]=useState(0);
   const [editLang,setEditLang]=useState(null);  // ← V10c: language settings editor
-  const [viewMode,setViewMode]=useState({});     // ← V10c: per-language 'active' | 'completed' view
   const updateLang=(lid,changes)=>upd({languages:data.languages.map(l=>l.id!==lid?l:{...l,...changes})});
 
   const getWeekDates=(offset)=>{
@@ -24,20 +23,30 @@ function LanguagePage({data,upd}){
 
   return<div>
     <div className="h1">🌐 Ngôn ngữ</div>
-    <p className="tx-mu" style={{marginBottom:14}}>Theo dõi học tập theo 4 kỹ năng: Ngữ pháp · Từ vựng · Nói · Viết</p>
+    <p className="tx-mu" style={{marginBottom:14}}>Theo dõi TIẾN TRÌNH học tập — nội dung/ghi chú vẫn nằm ở OneNote, essay ở Google Docs. Ngữ pháp & Nói dùng chung engine mastery với Course, nên cũng tự có Review Priority khi lâu chưa đụng tới.</p>
     {data.languages.map(lang=>{
       const cats=lang.categories||defCats();
+      const concepts=lang.concepts||[];
       const cd=wd.filter(d=>lang.log[`${d}_class`]).length;
       const st=wd.reduce((s,d)=>s+(lang.log[`${d}_self_min`]||0),0);
       const goal=lang.classDOW.length*90+lang.selfMin*7;
       const pv=Math.min(100,Math.round((st+cd*90)/goal*100));
       const vocab=cats.vocabulary||{total:0,weeklyGoal:50};
       const totalVocab=vocab.total||0;
-      const grammarDone=cats.grammar?.items?.filter(i=>i.done).length||0;
-      const speakingDone=cats.speaking?.items?.filter(i=>i.done).length||0;
-      const writingDone=cats.writing?.items?.filter(i=>i.done).length||0;
+      const grammarConcepts=concepts.filter(c=>c.skill==='grammar');
+      const speakingConcepts=concepts.filter(c=>c.skill==='speaking');
+      const vocabConcepts=concepts.filter(c=>c.skill==='vocab');
+      const grammarDone=grammarConcepts.filter(c=>deriveConceptStatus(c,null,data)==='Mastered').length;
+      const speakingDone=speakingConcepts.filter(c=>deriveConceptStatus(c,null,data)==='Mastered').length;
+      const writingItems=cats.writing?.items||[];
+      const writingDone=writingItems.filter(i=>i.done).length;
       const cefrEntry=Object.entries(CEFR_VOCAB).find(([,v])=>totalVocab<v);
       const cefrNext=cefrEntry?cefrEntry:[null,null];
+      const updateSkillConcepts=(skill,updatedList)=>{
+        const others=concepts.filter(c=>c.skill!==skill);
+        updateLang(lang.id,{concepts:[...updatedList,...others]});
+      };
+      const updateWriting=(updatedItems)=>updateLang(lang.id,{categories:{...cats,writing:{items:updatedItems}}});
       return<div key={lang.id} className="card" style={{marginBottom:14}}>
         <div className="flex-sb" style={{marginBottom:10}}>
           <div style={{display:'flex',gap:9,alignItems:'center'}}><span style={{fontSize:24}}>{lang.emoji}</span><div><div style={{fontSize:14,fontWeight:600}}>{lang.name}</div><div className="tx-dm">{lang.level} → {lang.target}</div></div></div>
@@ -53,11 +62,11 @@ function LanguagePage({data,upd}){
             <div className="tx-dm">từ vựng</div>
             {cefrNext[0]&&<div style={{fontSize:9,color:'var(--dm)'}}>→ {cefrNext[1]-totalVocab} đến {cefrNext[0]}</div>}
           </div>
-          <div style={{background:'var(--sur)',borderRadius:6,padding:'5px 10px',textAlign:'center',flex:1}}><div style={{fontSize:16,fontWeight:600,color:lang.color}}>{grammarDone}</div><div className="tx-dm">ngữ pháp ✓</div></div>
-          <div style={{background:'var(--sur)',borderRadius:6,padding:'5px 10px',textAlign:'center',flex:1}}><div style={{fontSize:16,fontWeight:600,color:lang.color}}>{speakingDone}</div><div className="tx-dm">topics nói ✓</div></div>
+          <div style={{background:'var(--sur)',borderRadius:6,padding:'5px 10px',textAlign:'center',flex:1}}><div style={{fontSize:16,fontWeight:600,color:lang.color}}>{grammarDone}/{grammarConcepts.length}</div><div className="tx-dm">ngữ pháp thành thạo</div></div>
+          <div style={{background:'var(--sur)',borderRadius:6,padding:'5px 10px',textAlign:'center',flex:1}}><div style={{fontSize:16,fontWeight:600,color:lang.color}}>{speakingDone}/{speakingConcepts.length}</div><div className="tx-dm">topics thành thạo</div></div>
           <div style={{background:'var(--sur)',borderRadius:6,padding:'5px 10px',textAlign:'center',flex:1}}><div style={{fontSize:16,fontWeight:600,color:lang.color}}>{writingDone}</div><div className="tx-dm">bài viết ✓</div></div>
         </div>
-        {/* Week navigation + attendance */}
+        {/* Week navigation + attendance — process-tracking, không đổi */}
         <div style={{background:'var(--sur)',borderRadius:8,padding:'9px',marginBottom:10}}>
           <div className="week-nav">
             <button className="btn-g btn-sm" onClick={()=>setWeekOffset(w=>w-1)}>‹ Tuần trước</button>
@@ -87,7 +96,9 @@ function LanguagePage({data,upd}){
           </div>
           <div style={{marginTop:6}}><Bar v={pv} color={lang.color} h={4}/><div className="tx-dm" style={{marginTop:2}}>{st+cd*90}/{goal} phút</div></div>
         </div>
-        {/* Vocabulary block – counter only */}
+        {/* Vocabulary — counter ở đây CỐ TÌNH giữ nguyên siêu đơn giản (1 chạm =
+           log ngay), không ép qua Concept/rating. Vocab Batches bên dưới là lớp
+           theo dõi SÂU HƠN, hoàn toàn tuỳ chọn — không bắt buộc dùng. */}
         <div className="lang-cat">
           <div className="lang-cat-hd flex-sb" style={{marginBottom:8}}>
             <div style={{display:'flex',alignItems:'center',gap:6}}>
@@ -107,28 +118,13 @@ function LanguagePage({data,upd}){
             </div>
           </div>
         </div>
-        {/* Grammar (with CEFR level chips), Speaking, Writing (with link) */}
-        <div style={{display:'flex',gap:6,marginBottom:8}}>
-          {[['active','📋 Đang học'],['completed','✅ Đã hoàn thành']].map(([k,l])=>{
-            const vm=viewMode[lang.id]||'active';
-            return<button key={k} onClick={()=>setViewMode(p=>({...p,[lang.id]:k}))} style={{padding:'4px 10px',borderRadius:6,border:`1px solid ${vm===k?lang.color:'var(--bdr)'}`,background:vm===k?lang.color+'1c':'transparent',color:vm===k?lang.color:'var(--mu)',cursor:'pointer',fontSize:11,fontWeight:vm===k?600:400}}>{l}</button>;})}
-        </div>
-        {[['grammar','📖','Ngữ pháp'],['speaking','🗣️','Nói'],['writing','✍️','Viết']].map(([catKey,emoji,label])=>{
-          const catData=cats[catKey]||{items:[]};const allItems=catData.items||[];
-          const vm=viewMode[lang.id]||'active';
-          const items=vm==='active'?allItems.filter(i=>!i.done):allItems.filter(i=>i.done);
-          const done2=allItems.filter(i=>i.done).length;
-          const addItem=(text,level,link)=>{
-            const ni={id:uid(),text:text.trim(),done:false};
-            if(catKey==='grammar')ni.level=level||'';
-            if(catKey==='writing')ni.link=link||'';
-            updateLang(lang.id,{categories:{...cats,[catKey]:{...catData,items:[...allItems,ni]}}});
-          };
-          const togItem=(id)=>updateLang(lang.id,{categories:{...cats,[catKey]:{...catData,items:allItems.map(i=>i.id===id?{...i,done:!i.done}:i)}}});
-          const delItem=(id)=>updateLang(lang.id,{categories:{...cats,[catKey]:{...catData,items:allItems.filter(i=>i.id!==id)}}});
-          const setItemLink=(id,link)=>updateLang(lang.id,{categories:{...cats,[catKey]:{...catData,items:allItems.map(i=>i.id===id?{...i,link}:i)}}});
-          return<InlineCatSection key={catKey+vm} catKey={catKey} emoji={emoji} label={label} lang={lang} items={items} done={done2} total={allItems.length} viewMode={vm} onToggle={togItem} onDelete={delItem} onAdd={addItem} onSetLink={setItemLink}/>;
-        })}
+        <LanguageConceptSection lang={lang} skill="vocab" emoji="🗂️" label="Vocab Batches (tuỳ chọn)" hint="Chỉ dùng nếu muốn ôn lại theo từng cụm — không bắt buộc mỗi từ."
+          concepts={vocabConcepts} data={data} onUpdate={l=>updateSkillConcepts('vocab',l)} defaultOpen={false} newPlaceholder="VD: Lektion 8 — Reisen..."/>
+        <LanguageConceptSection lang={lang} skill="grammar" emoji="📖" label="Ngữ pháp" hasLevelChip
+          concepts={grammarConcepts} data={data} onUpdate={l=>updateSkillConcepts('grammar',l)} defaultOpen={true} newPlaceholder="Điểm ngữ pháp mới..."/>
+        <LanguageConceptSection lang={lang} skill="speaking" emoji="🗣️" label="Nói"
+          concepts={speakingConcepts} data={data} onUpdate={l=>updateSkillConcepts('speaking',l)} defaultOpen={true} newPlaceholder="Topic đã luyện nói..."/>
+        <LanguageWritingSection lang={lang} items={writingItems} onUpdate={updateWriting}/>
         <div style={{marginTop:10,fontSize:11,color:'var(--mu)'}}>📅 <strong style={{color:'var(--tx)'}}>{lang.schedule}</strong> · {lang.resources.join(' · ')}</div>
       </div>;})}
     {editLang&&<LangEditorModal lang={editLang} onSave={ch=>{updateLang(editLang.id,ch);setEditLang(null);}} onClose={()=>setEditLang(null)}/>}
@@ -156,34 +152,105 @@ function LangEditorModal({lang,onSave,onClose}){
     <div style={{display:'flex',gap:8}}><button className="btn-p" style={{flex:1,justifyContent:'center'}} onClick={()=>onSave(f)}>Lưu</button><button className="btn-g" onClick={onClose}>Huỷ</button></div>
   </div></div>;}
 
-function InlineCatSection({catKey,emoji,label,lang,items,done,total,viewMode,onToggle,onDelete,onAdd,onSetLink}){
-  const [open,setOpen]=useState(true);const [newText,setNewText]=useState('');const [newLevel,setNewLevel]=useState('B1');const [newLink,setNewLink]=useState('');
-  const doAdd=()=>{if(!newText.trim())return;onAdd(newText,newLevel,newLink);setNewText('');setNewLink('');};
+/* ── v13.1: Grammar/Speaking/Vocab-batch section — Concept-based, reuses the
+   SAME mastery/touches/Review-Priority engine as Course (04-mastery-engine.js).
+   Rating is intentionally ONE tap (QUICK_EVAL_SCALE), not two separate
+   Understanding+Confidence sliders like Course's FinishSessionModal — a
+   language skill check is quick and informal, low-friction matters more
+   here than the extra precision. ── */
+function LanguageConceptSection({lang,skill,emoji,label,concepts,data,onUpdate,defaultOpen,hasLevelChip,newPlaceholder,hint}){
+  const [open,setOpen]=useState(defaultOpen!==false);
+  const [newText,setNewText]=useState('');
+  const [newLevel,setNewLevel]=useState('B1');
+  const add=()=>{
+    if(!newText.trim())return;
+    const nc={id:uid(),title:newText.trim(),skill,legacyLevel:hasLevelChip?newLevel:'',touches:[],objectiveIds:[],prerequisiteConceptIds:[]};
+    onUpdate([nc,...concepts]);
+    setNewText('');
+  };
+  const updateOne=(updated)=>onUpdate(concepts.map(c=>c.id===updated.id?updated:c));
+  const delOne=(id)=>onUpdate(concepts.filter(c=>c.id!==id));
+  const masteredCount=concepts.filter(c=>deriveConceptStatus(c,null,data)==='Mastered').length;
   return<div className="lang-cat">
     <div className="lang-cat-hd flex-sb" style={{marginBottom:open?8:0}} onClick={()=>setOpen(o=>!o)}>
-      <div style={{display:'flex',alignItems:'center',gap:6}}><span style={{fontSize:15}}>{emoji}</span><span style={{fontSize:13,fontWeight:600,color:'var(--tx)'}}>{label}</span><span className="tx-dm">({done}/{total} ✓)</span></div>
+      <div style={{display:'flex',alignItems:'center',gap:6}}><span style={{fontSize:15}}>{emoji}</span><span style={{fontSize:13,fontWeight:600,color:'var(--tx)'}}>{label}</span><span className="tx-dm">({masteredCount}/{concepts.length} thành thạo)</span></div>
       <span style={{fontSize:10,color:'var(--dm)'}}>{open?'▲':'▼'}</span>
     </div>
     {open&&<div>
-      {items.length===0&&viewMode==='completed'&&<div className="tx-dm" style={{padding:'8px 0',textAlign:'center'}}>Chưa hoàn thành mục nào trong {label.toLowerCase()}</div>}
-      {items.length===0&&viewMode==='active'&&<div className="tx-dm" style={{padding:'8px 0',textAlign:'center'}}>🎉 Đã hoàn thành hết! Thêm mục mới bên dưới</div>}
-      {items.map((item,i)=><div key={item.id} style={{padding:'5px 0',borderBottom:i<items.length-1?'1px solid var(--bdr)':'none'}}>
+      {hint&&<div className="tx-dm" style={{marginBottom:6}}>{hint}</div>}
+      {concepts.length===0&&<div className="tx-dm" style={{padding:'8px 0',textAlign:'center'}}>Chưa có mục nào</div>}
+      {concepts.map(c=><LangConceptRow key={c.id} concept={c} color={lang.color} data={data} onUpdate={updateOne} onDelete={()=>delOne(c.id)}/>)}
+      <div style={{display:'flex',gap:5,marginTop:7,flexWrap:'wrap'}}>
+        {hasLevelChip&&<select value={newLevel} onChange={e=>setNewLevel(e.target.value)} style={{background:'var(--sur)',border:'1px solid var(--bdr)',borderRadius:6,color:'var(--tx)',fontSize:11,padding:'4px 6px',outline:'none'}}>{CEFR_LEVELS.map(l=><option key={l} value={l}>{l}</option>)}</select>}
+        <input className="inp" value={newText} onChange={e=>setNewText(e.target.value)} placeholder={newPlaceholder}
+          onKeyDown={e=>e.key==='Enter'&&add()} style={{flex:1,fontSize:11,padding:'5px 8px'}}/>
+        <button className="btn-p btn-sm" onClick={add}>+</button>
+      </div>
+    </div>}
+  </div>;}
+
+function LangConceptRow({concept,color,data,onUpdate,onDelete}){
+  const [rating,setRating]=useState(false);
+  const status=deriveConceptStatus(concept,null,data);
+  const meta=STATUS_META[status];
+  const mastery=calcProgress(concept,data);
+  const rp=computeReviewPriority(concept,null,data);
+  const rate=(v)=>{
+    onUpdate({...concept,touches:[...(concept.touches||[]),{understanding:v,confidence:v,timestamp:Date.now(),sessionId:null}]});
+    setRating(false);
+  };
+  return<div style={{padding:'6px 0',borderBottom:'1px solid var(--bdr)'}}>
+    <div style={{display:'flex',alignItems:'center',gap:7}}>
+      <span style={{fontSize:13}} title={STATUS_META[status].label}>{meta.emoji}</span>
+      {concept.legacyLevel&&<span className="level-chip on" style={{background:color+'33',color,borderColor:color+'55'}}>{concept.legacyLevel}</span>}
+      <span onClick={()=>setRating(r=>!r)} style={{flex:1,fontSize:12,cursor:'pointer'}}>{concept.title}</span>
+      {mastery>0&&<span style={{fontSize:10,color,fontWeight:600}}>{mastery}%</span>}
+      {(rp==='Medium'||rp==='High')&&<span style={{fontSize:9}} title={reviewPriorityLabel(rp,false)}>{rp==='High'?'🔴':'🟡'}</span>}
+      <button onClick={()=>setRating(r=>!r)} style={{background:'none',border:'none',cursor:'pointer',color,fontSize:11,opacity:.75}}>⭐</button>
+      <button onClick={onDelete} style={{background:'none',border:'none',cursor:'pointer',color:'var(--dm)',fontSize:12,opacity:.35}}>×</button>
+    </div>
+    {rating&&<div style={{display:'flex',gap:5,marginTop:5,paddingLeft:20}}>
+      {QUICK_EVAL_SCALE.map(s=><button key={s.value} onClick={()=>rate(s.value)} title={s.label} style={{background:'var(--sur)',border:'1px solid var(--bdr)',borderRadius:6,padding:'3px 7px',cursor:'pointer',fontSize:14}}>{s.emoji}</button>)}
+    </div>}
+  </div>;}
+
+/* Writing stays a task list — essays are one-off deliverables, not a "review
+   repeatedly" skill, so unlike Grammar/Speaking they're NOT converted to
+   Concepts. Just gains Score/Feedback once marked done. */
+function LanguageWritingSection({lang,items,onUpdate}){
+  const [open,setOpen]=useState(true);
+  const [newText,setNewText]=useState('');
+  const [newLink,setNewLink]=useState('');
+  const add=()=>{if(!newText.trim())return;onUpdate([{id:uid(),text:newText.trim(),done:false,link:newLink,score:null,feedback:''},...items]);setNewText('');setNewLink('');};
+  const upd1=(id,changes)=>onUpdate(items.map(i=>i.id===id?{...i,...changes}:i));
+  const del1=(id)=>onUpdate(items.filter(i=>i.id!==id));
+  const done=items.filter(i=>i.done).length;
+  return<div className="lang-cat">
+    <div className="lang-cat-hd flex-sb" style={{marginBottom:open?8:0}} onClick={()=>setOpen(o=>!o)}>
+      <div style={{display:'flex',alignItems:'center',gap:6}}><span style={{fontSize:15}}>✍️</span><span style={{fontSize:13,fontWeight:600,color:'var(--tx)'}}>Viết</span><span className="tx-dm">({done}/{items.length} ✓)</span></div>
+      <span style={{fontSize:10,color:'var(--dm)'}}>{open?'▲':'▼'}</span>
+    </div>
+    {open&&<div>
+      {items.length===0&&<div className="tx-dm" style={{padding:'8px 0',textAlign:'center'}}>Chưa có bài viết nào</div>}
+      {items.map(it=><div key={it.id} style={{padding:'6px 0',borderBottom:'1px solid var(--bdr)'}}>
         <div style={{display:'flex',alignItems:'center',gap:7}}>
-          <Tick done={item.done} color={lang.color} onClick={()=>onToggle(item.id)}/>
-          {catKey==='grammar'&&item.level&&<span className="level-chip on" style={{background:lang.color+'33',color:lang.color,borderColor:lang.color+'55'}}>{item.level}</span>}
-          <span style={{flex:1,fontSize:12,textDecoration:item.done?'line-through':'none',opacity:item.done?.5:1}}>{item.text}</span>
-          {catKey==='writing'&&<button style={{background:'none',border:'none',cursor:'pointer',color:item.link?lang.color:'var(--dm)',fontSize:10,opacity:item.link?.8:.35}} onClick={()=>{if(item.link)window.open(item.link,'_blank');else{const u=prompt('Link bài viết:','https://');if(u)onSetLink(item.id,u);}}}>🔗</button>}
-          <button style={{background:'none',border:'none',cursor:'pointer',color:'var(--dm)',fontSize:12,opacity:.35}} onClick={()=>onDelete(item.id)}>×</button>
+          <Tick done={it.done} color={lang.color} onClick={()=>upd1(it.id,{done:!it.done})}/>
+          <span style={{flex:1,fontSize:12,textDecoration:it.done?'line-through':'none',opacity:it.done?.6:1}}>{it.text}</span>
+          <button style={{background:'none',border:'none',cursor:'pointer',color:it.link?lang.color:'var(--dm)',fontSize:10,opacity:it.link?.8:.35}} onClick={()=>{if(it.link)window.open(it.link,'_blank');else{const u=prompt('Link bài viết (Google Docs...):','https://');if(u)upd1(it.id,{link:u});}}}>🔗</button>
+          <button style={{background:'none',border:'none',cursor:'pointer',color:'var(--dm)',fontSize:12,opacity:.35}} onClick={()=>del1(it.id)}>×</button>
         </div>
-        {catKey==='writing'&&item.link&&<div style={{fontSize:10,color:lang.color,paddingLeft:24,marginTop:2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}><a href={item.link} target="_blank" rel="noreferrer" style={{color:lang.color}}>{item.link}</a></div>}
+        {it.link&&<div style={{fontSize:10,color:lang.color,paddingLeft:24,marginTop:2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}><a href={it.link} target="_blank" rel="noreferrer" style={{color:lang.color}}>{it.link}</a></div>}
+        {it.done&&<div style={{display:'flex',gap:6,marginTop:4,paddingLeft:23,alignItems:'center'}}>
+          <span className="tx-dm">Điểm:</span>
+          <input type="number" min={0} max={10} value={it.score??''} onChange={e=>upd1(it.id,{score:e.target.value===''?null:+e.target.value})} placeholder="-" style={{width:40,background:'var(--sur)',border:'1px solid var(--bdr)',borderRadius:4,color:'var(--tx)',fontSize:11,padding:'2px 5px',textAlign:'center',outline:'none'}}/>
+          <input value={it.feedback} onChange={e=>upd1(it.id,{feedback:e.target.value})} placeholder="Feedback ngắn..." style={{flex:1,background:'var(--sur)',border:'1px solid var(--bdr)',borderRadius:4,color:'var(--tx)',fontSize:11,padding:'2px 6px',outline:'none'}}/>
+        </div>}
       </div>)}
-      {viewMode==='active'&&<div style={{display:'flex',gap:5,marginTop:7,flexWrap:'wrap'}}>
-        {catKey==='grammar'&&<select value={newLevel} onChange={e=>setNewLevel(e.target.value)} style={{background:'var(--sur)',border:'1px solid var(--bdr)',borderRadius:6,color:'var(--tx)',fontSize:11,padding:'4px 6px',outline:'none'}}>{CEFR_LEVELS.map(l=><option key={l} value={l}>{l}</option>)}</select>}
-        <input className="inp" value={newText} onChange={e=>setNewText(e.target.value)} placeholder={catKey==='speaking'?'Topic đã luyện nói...':catKey==='writing'?'Tên bài viết...':'Điểm ngữ pháp...'}
-          onKeyDown={e=>e.key==='Enter'&&doAdd()} style={{flex:1,fontSize:11,padding:'5px 8px'}}/>
-        {catKey==='writing'&&<input className="inp" value={newLink} onChange={e=>setNewLink(e.target.value)} placeholder="Link (optional)..." style={{flex:1,fontSize:11,padding:'5px 8px'}}/>}
-        <button className="btn-p btn-sm" onClick={doAdd}>+</button>
-      </div>}
+      <div style={{display:'flex',gap:5,marginTop:7}}>
+        <input className="inp" value={newText} onChange={e=>setNewText(e.target.value)} placeholder="Tên bài viết..." onKeyDown={e=>e.key==='Enter'&&add()} style={{flex:1,fontSize:11,padding:'5px 8px'}}/>
+        <input className="inp" value={newLink} onChange={e=>setNewLink(e.target.value)} placeholder="Link (optional)..." style={{flex:1,fontSize:11,padding:'5px 8px'}}/>
+        <button className="btn-p btn-sm" onClick={add}>+</button>
+      </div>
     </div>}
   </div>;}
 

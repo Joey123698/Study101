@@ -36,7 +36,7 @@ function App(){
     // Firebase init failure → fall back to local storage with visible warning, never hang silently.
     if(!FB_ON||!_auth||!_db){
       if(FB_ON&&(!_auth||!_db)){console.error('Firebase SDK failed to initialize — falling back to local storage.');setFbInitFailed(true);}
-      let saved=loadLocal();if(saved)saved=migrateToV12(saved);const d=saved||buildInit();setData(d);applyTheme(d.settings);setAuthLoading(false);
+      let saved=loadLocal();const d=migrateToV12(saved||buildInit());setData(d);applyTheme(d.settings);setAuthLoading(false);
       setTimeout(()=>{const el=document.getElementById('loading');if(el)el.style.display='none';},300);return;
     }
     const unsub=_auth.onAuthStateChanged(async u=>{setUser(u);if(u){await loadFB(u.uid);}else{setData(null);}setAuthLoading(false);setTimeout(()=>{const el=document.getElementById('loading');if(el)el.style.display='none';},300);});
