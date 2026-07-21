@@ -28,6 +28,9 @@ const DEFAULT_MASTERY_SETTINGS={
   reviewW_staleness:0.30,     // more days since last touch → higher priority
   reviewW_confidence:0.15,    // lower confidence → higher priority
   reviewW_examUrgency:0.20,   // closer exam → higher priority
+  reviewW_examWeight:0.15,    // v13.2: higher Exam Weight (manually set per Concept) → higher priority.
+                               // Additive on top of the other 4 (not carved out of them) — see
+                               // computeReviewPriority for why that matters for backward compat.
 };
 
 function getMasterySettings(data){return{...DEFAULT_MASTERY_SETTINGS,...(data?.masterySettings||{})};}
@@ -156,12 +159,27 @@ function computeReviewPriority(concept,examDate,data){
     masteryUrgency*ms.reviewW_mastery+
     stalenessUrgency*ms.reviewW_staleness+
     confidenceUrgency*ms.reviewW_confidence+
-    examUrgency*ms.reviewW_examUrgency;
+    examUrgency*ms.reviewW_examUrgency+
+    (concept.examWeight||0)/5*100*ms.reviewW_examWeight; // v13.2: additive on top, NOT rebalanced —
+    // a Concept with examWeight unset (0, the default for every Concept until
+    // someone sets it) contributes exactly 0 here, so nothing that hasn't
+    // adopted the new field shifts priority bucket because of this change.
 
   if(score>=65)return 'High';
   if(score>=35)return 'Medium';
   return 'Low';
 }
+
+/* ── v13.2: Priority (S/A/B) is NOT its own stored field — it's derived from
+   Exam Weight so there's only one number to keep in your head per Concept,
+   not two that can silently drift out of sync. ── */
+function conceptPriority(examWeight){
+  if(!examWeight)return '';
+  if(examWeight>=5)return 'S';
+  if(examWeight>=4)return 'A';
+  return 'B';
+}
+const CONCEPT_PRIORITY_META={S:{color:'#E24B4A'},A:{color:'#BA7517'},B:{color:'#378ADD'}};
 
 /** Chapter progress = average mastery of its Concepts (0 if no concepts). */
 function chapterProgress(chapter,allConcepts,data){

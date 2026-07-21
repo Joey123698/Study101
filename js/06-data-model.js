@@ -264,6 +264,23 @@ function migrateToV12(d){
     }),
   }));
 
+  // 6. v13.2 Exam Metadata + Objective Library, per approved proposal.
+  //    difficulty/examWeight default to 0 ("chưa đặt") — additive only, see
+  //    the matching computeReviewPriority change in 04-mastery-engine.js:
+  //    examWeight=0 contributes exactly 0 to the review-priority score, so
+  //    every concept nobody has touched yet scores IDENTICALLY to before
+  //    this migration ran. No existing priority silently shifts.
+  //    objectiveLibrary is a NEW, separate, empty-by-default array — it does
+  //    NOT touch session.objectives at all (still full inline objects, still
+  //    read/written exactly as before everywhere). Library entries only get
+  //    COPIED into a session's objectives when picked, so nothing that reads
+  //    session.objectives needs to change.
+  if(d.courses)d.courses=d.courses.map(c=>({
+    ...c,
+    objectiveLibrary:c.objectiveLibrary||[],
+    concepts:(c.concepts||[]).map(cn=>({...cn,difficulty:cn.difficulty||0,examWeight:cn.examWeight||0})),
+  }));
+
   return d;
 }
 

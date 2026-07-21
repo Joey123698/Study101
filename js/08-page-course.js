@@ -551,19 +551,30 @@ function BulkImportSessionsModal({concepts,onSave,onClose}){
     </div>
   </div></div>;}
 
-function SessionEditorModal({session,concepts,onSave,onClose}){
+function SessionEditorModal({session,concepts,objectiveLibrary,onUpdateLibrary,onSave,onClose}){
   const [f,setF]=useState(session?{
     title:session.title,estimatedDuration:session.estimatedDuration||30,
     objectives:session.objectives||[],conceptIds:session.conceptIds||[],
     resources:session.resources||[],customTodos:session.customTodos||[],
   }:{title:'',estimatedDuration:30,objectives:[],conceptIds:[],resources:[],customTodos:[]});
   const [newObjText,setNewObjText]=useState('');
+  const [saveNewToLibrary,setSaveNewToLibrary]=useState(false);
   const [expandedObjId,setExpandedObjId]=useState(null);
   const [newResource,setNewResource]=useState('');
   const [newTodo,setNewTodo]=useState('');
   const s=(k,v)=>setF(p=>({...p,[k]:v}));
   const togConcept=(id)=>setF(p=>({...p,conceptIds:p.conceptIds.includes(id)?p.conceptIds.filter(x=>x!==id):[...p.conceptIds,id]}));
-  const addObjective=()=>{if(!newObjText.trim())return;setF(p=>({...p,objectives:[...p.objectives,{id:uid(),text:newObjText.trim(),description:'',expectedOutcome:'',conceptIds:[],estimatedTime:'',assessmentCriteria:''}]}));setNewObjText('');};
+  const addObjective=()=>{
+    if(!newObjText.trim())return;
+    const o={id:uid(),text:newObjText.trim(),description:'',expectedOutcome:'',conceptIds:[],estimatedTime:'',assessmentCriteria:''};
+    setF(p=>({...p,objectives:[...p.objectives,o]}));
+    // v13.2: lưu riêng 1 bản vào thư viện Course (id khác, độc lập với bản
+    // trong session) — để lần sau CHỌN thay vì gõ lại, không cần định nghĩa
+    // Objective là 1 entity mới tách biệt Session.
+    if(saveNewToLibrary&&onUpdateLibrary)onUpdateLibrary([...(objectiveLibrary||[]),{...o,id:uid()}]);
+    setNewObjText('');setSaveNewToLibrary(false);
+  };
+  const pickFromLibrary=(libObj)=>setF(p=>({...p,objectives:[...p.objectives,{...libObj,id:uid()}]}));
   const updObjective=(id,ch)=>setF(p=>({...p,objectives:p.objectives.map(o=>o.id===id?{...o,...ch}:o)}));
   const delObjective=(id)=>setF(p=>({...p,objectives:p.objectives.filter(o=>o.id!==id)}));
   const addResource=()=>{if(!newResource.trim())return;setF(p=>({...p,resources:[...p.resources,{id:uid(),text:newResource.trim()}]}));setNewResource('');};
@@ -604,10 +615,20 @@ function SessionEditorModal({session,concepts,onSave,onClose}){
           </div>}
         </div>}
       </div>;})}
-    <div style={{display:'flex',gap:5,marginBottom:14}}>
+    <div style={{display:'flex',gap:5,marginBottom:6}}>
       <input className="inp" value={newObjText} onChange={e=>setNewObjText(e.target.value)} placeholder="Thêm objective..." style={{flex:1,fontSize:11}} onKeyDown={e=>e.key==='Enter'&&addObjective()}/>
       <button className="btn-p btn-sm" onClick={addObjective}>+</button>
     </div>
+    <label style={{display:'flex',alignItems:'center',gap:6,fontSize:10,color:'var(--mu)',marginBottom:12,cursor:'pointer'}}>
+      <input type="checkbox" checked={saveNewToLibrary} onChange={e=>setSaveNewToLibrary(e.target.checked)}/>
+      Lưu vào thư viện Objectives của môn — lần sau chọn lại, khỏi gõ
+    </label>
+    {objectiveLibrary?.length>0&&<div style={{marginBottom:14}}>
+      <div className="tx-dm" style={{marginBottom:4}}>📚 Chọn từ thư viện</div>
+      <div style={{display:'flex',flexWrap:'wrap',gap:5}}>
+        {objectiveLibrary.map(o=><button key={o.id} onClick={()=>pickFromLibrary(o)} style={{fontSize:10,padding:'4px 8px',borderRadius:6,border:'1px solid var(--bdr)',background:'var(--sur)',color:'var(--mu)',cursor:'pointer'}}>+ {o.text}</button>)}
+      </div>
+    </div>}
 
     <div className="tx-dm" style={{marginBottom:5,fontWeight:600}}>📚 Concepts phủ trong Session này</div>
     {concepts.length===0&&<div className="tx-dm" style={{marginBottom:14}}>Chưa có Concept nào trong môn — thêm ở phần Chapters & Concepts trước.</div>}
@@ -980,7 +1001,7 @@ function SessionLibraryBlock({course,data,upd,awardXP,onUpdate}){
       {legacy.map((o,i)=><div key={o.id} style={{fontSize:11,color:'var(--mu)',padding:'2px 0'}}>{i+1}. {o.text}</div>)}
     </div>}
 
-    {(showEditor||editSession)&&<SessionEditorModal session={editSession} concepts={course.concepts||[]} onSave={saveSession} onClose={()=>{setShowEditor(false);setEditSession(null);}}/>}
+    {(showEditor||editSession)&&<SessionEditorModal session={editSession} concepts={course.concepts||[]} objectiveLibrary={course.objectiveLibrary||[]} onUpdateLibrary={(lib)=>onUpdate({objectiveLibrary:lib})} onSave={saveSession} onClose={()=>{setShowEditor(false);setEditSession(null);}}/>}
   </div>;}
 
 
@@ -1029,12 +1050,15 @@ function ConceptRow({concept,color,examDate,data,course,upd,onTouch,onEdit,onDel
   // one to start) instead of hunting through the Session list separately.
   const linkedSessions=(course?.sessions||[]).filter(s=>(s.conceptIds||[]).includes(concept.id));
   const onUpdateCourseLocal=course&&upd?(ch)=>upd({courses:data.courses.map(c=>c.id===course.id?{...c,...ch}:c)}):null;
+  const priority=conceptPriority(concept.examWeight);
   return<div style={{padding:'8px 0',borderBottom:'1px solid var(--bdr)'}}>
     <div style={{display:'flex',alignItems:'center',gap:8}}>
       <span style={{fontSize:13,flexShrink:0}}>{meta.emoji}</span>
       <div style={{flex:1,minWidth:0}}>
         <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:3,cursor:linkedSessions.length>0?'pointer':'default'}} onClick={()=>linkedSessions.length>0&&setShowSessions(s=>!s)}>
+          {priority&&<span title={`Exam Weight ${concept.examWeight}/5`} style={{fontSize:9,background:CONCEPT_PRIORITY_META[priority].color+'22',color:CONCEPT_PRIORITY_META[priority].color,borderRadius:4,padding:'1px 5px',fontWeight:800}}>{priority}</span>}
           <span style={{fontSize:12,fontWeight:500}}>{concept.title}</span>
+          {concept.difficulty>0&&<span title={`Độ khó ${concept.difficulty}/5`} style={{fontSize:9,color:'var(--wa)'}}>{'●'.repeat(concept.difficulty)}</span>}
           {conf>0&&<span style={{fontSize:9,color:'var(--dm)'}}>{'⭐'.repeat(conf)}</span>}
           {reviewPriority!=='None'&&reviewPriority!=='Low'&&<span title={reviewPriorityLabel(reviewPriority,isTask)} style={{fontSize:9,background:rpMeta.color+'22',color:rpMeta.color,borderRadius:4,padding:'1px 5px',fontWeight:700}}>{rpMeta.emoji} {reviewPriorityLabel(reviewPriority,isTask)}</span>}
           {linkedSessions.length>0&&<span style={{fontSize:9,color:'var(--acc)',background:'var(--acc2)',borderRadius:4,padding:'1px 5px'}}>🔗 {linkedSessions.length} session {showSessions?'▲':'▼'}</span>}
@@ -1088,17 +1112,28 @@ function ConceptRow({concept,color,examDate,data,course,upd,onTouch,onEdit,onDel
    3 Sessions), rather than knowledge learned through repetition. Left blank,
    nothing changes — this is purely additive, 100% backward-compatible. ── */
 function ConceptEditorModal({concept,chapterId,onSave,onClose}){
-  const [f,setF]=useState(concept?{title:concept.title,startDate:concept.startDate||'',targetDate:concept.targetDate||concept.legacyDueDate||'',targetTouches:concept.targetTouches||''}:{title:'',startDate:'',targetDate:'',targetTouches:''});
+  const [f,setF]=useState(concept?{title:concept.title,startDate:concept.startDate||'',targetDate:concept.targetDate||concept.legacyDueDate||'',targetTouches:concept.targetTouches||'',difficulty:concept.difficulty||0,examWeight:concept.examWeight||0}:{title:'',startDate:'',targetDate:'',targetTouches:'',difficulty:0,examWeight:0});
   const s=(k,v)=>setF(p=>({...p,[k]:v}));
   const save=()=>{
     if(!f.title.trim())return;
     const clean={...f,targetTouches:f.targetTouches?Math.max(1,parseInt(f.targetTouches)||0)||undefined:undefined};
     onSave(concept?{...concept,...clean}:{id:uid(),chapterId,touches:[],objectiveIds:[],prerequisiteConceptIds:[],legacySubtasks:[],...clean});
   };
+  const StarPicker=({value,onChange,activeColor})=><div style={{display:'flex',gap:3}}>
+    {[1,2,3,4,5].map(n=><span key={n} onClick={()=>onChange(value===n?0:n)} style={{fontSize:18,cursor:'pointer',opacity:value>=n?1:.25,color:activeColor}}>★</span>)}
+  </div>;
   return<div className="ov" onClick={onClose}><div className="modal" style={{maxWidth:400}} onClick={e=>e.stopPropagation()}>
     <div className="flex-sb" style={{marginBottom:12}}><span style={{fontSize:14,fontWeight:500}}>{concept?'✏️ Sửa Concept':'+ Concept mới'}</span><button className="btn-g btn-sm" onClick={onClose}>✕</button></div>
     <div className="tx-dm" style={{marginBottom:2}}>Tên concept *</div>
     <input className="inp" value={f.title} onChange={e=>s('title',e.target.value)} placeholder="VD: Maximum Likelihood Estimation..." style={{marginBottom:10}} autoFocus/>
+    {/* v13.2 Exam Metadata — cả 2 đều tùy chọn (0 = chưa đặt, không hiện badge
+       gì cả). Priority (S/A/B) KHÔNG phải field riêng — tự suy ra từ Exam
+       Weight, đỡ phải tự tay giữ đồng bộ 2 con số nói cùng 1 chuyện. */}
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:4}}>
+      <div><div className="tx-dm" style={{marginBottom:3}}>Độ khó</div><StarPicker value={f.difficulty} onChange={v=>s('difficulty',v)} activeColor="var(--wa)"/></div>
+      <div><div className="tx-dm" style={{marginBottom:3}}>Trọng số thi (Exam Weight)</div><StarPicker value={f.examWeight} onChange={v=>s('examWeight',v)} activeColor="var(--cr)"/></div>
+    </div>
+    <div style={{fontSize:10,color:'var(--dm)',marginBottom:10}}>Exam Weight cao → Concept này được ưu tiên nhắc ôn sớm hơn, và tính vào % Exam Coverage của môn.</div>
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:10}}>
       <div><div className="tx-dm" style={{marginBottom:2}}>Bắt đầu học từ (tùy chọn)</div>
         <input type="date" className="inp" value={f.startDate} onChange={e=>s('startDate',e.target.value)}/></div>
@@ -1116,7 +1151,10 @@ function ConceptEditorModal({concept,chapterId,onSave,onClose}){
 function ChapterBlock({chapter,concepts,examDate,color,data,course,upd,onAddConcept,onEditConcept,onDeleteConcept,onTouch,onEditChapter,onDeleteChapter,onBulkAddConcepts}){
   const [expanded,setExpanded]=useState(true);
   const [showBulk,setShowBulk]=useState(false);
-  const chConcepts=concepts.filter(c=>c.chapterId===chapter.id);
+  const [onlyPriority,setOnlyPriority]=useState(false); // v13.2: "chỉ học concept trọng số cao" — lọc theo S/A
+  const chConceptsAll=concepts.filter(c=>c.chapterId===chapter.id);
+  const chConcepts=onlyPriority?chConceptsAll.filter(c=>['S','A'].includes(conceptPriority(c.examWeight))):chConceptsAll;
+  const hasAnyWeighted=chConceptsAll.some(c=>c.examWeight>0);
   const prog=chapterProgress(chapter,concepts,data);
   // v13: a Chapter created before any coursePhase existed defaults to
   // coursePhaseId:'' and silently never counts toward Phase/Course progress
@@ -1130,12 +1168,15 @@ function ChapterBlock({chapter,concepts,examDate,color,data,course,upd,onAddConc
       {isOrphanChapter&&<span title="Chưa gắn Phase nào — % sẽ không tính vào Phase/môn học" style={{fontSize:9,color:'var(--wa)',background:'var(--wab)',border:'1px solid var(--waBdr)',borderRadius:4,padding:'1px 6px',fontWeight:700}}>⚠️ Chưa gắn Phase</span>}
       <div style={{width:60}}><Bar v={prog} color={color}/></div>
       <span style={{fontSize:11,fontWeight:700,color,minWidth:32,textAlign:'right'}}>{prog}%</span>
-      <span className="tx-dm" style={{minWidth:50,textAlign:'right'}}>{chConcepts.length} concept</span>
+      <span className="tx-dm" style={{minWidth:50,textAlign:'right'}}>{chConceptsAll.length} concept</span>
       <button onClick={e=>{e.stopPropagation();onEditChapter();}} style={{background:'none',border:'none',cursor:'pointer',color:'var(--dm)',fontSize:11,opacity:.5}}>✏️</button>
       <button onClick={e=>{e.stopPropagation();onDeleteChapter();}} style={{background:'none',border:'none',cursor:'pointer',color:'var(--dm)',fontSize:13,opacity:.35}}>×</button>
     </div>
     {expanded&&<div style={{marginTop:8,paddingLeft:19}}>
-      {chConcepts.length===0&&<div className="tx-dm" style={{padding:'8px 0'}}>Chưa có concept nào trong chapter này</div>}
+      {hasAnyWeighted&&<div style={{marginBottom:7}}>
+        <button onClick={()=>setOnlyPriority(p=>!p)} style={{padding:'3px 9px',borderRadius:6,border:`1px solid ${onlyPriority?'var(--cr)':'var(--bdr)'}`,background:onlyPriority?'var(--crb)':'transparent',color:onlyPriority?'var(--cr)':'var(--mu)',cursor:'pointer',fontSize:10,fontWeight:onlyPriority?700:400}}>{onlyPriority?'★ Đang lọc: chỉ S+A':'★ Chỉ học concept trọng số cao (S+A)'}</button>
+      </div>}
+      {chConcepts.length===0&&<div className="tx-dm" style={{padding:'8px 0'}}>{onlyPriority?'Không có concept nào ưu tiên S/A trong chapter này':'Chưa có concept nào trong chapter này'}</div>}
       {chConcepts.map(c=><ConceptRow key={c.id} concept={c} color={color} examDate={examDate} data={data} course={course} upd={upd}
         onTouch={()=>onTouch(c)} onEdit={()=>onEditConcept(c)} onDelete={()=>onDeleteConcept(c.id)}/>)}
       <div style={{display:'flex',gap:6,marginTop:8}}>
@@ -1455,6 +1496,15 @@ function CourseDetail({course,data,upd,awardXP,onBack,onUpdate,onDelete}){
   const progress=courseProgress(course,data);
   const weak=weakConcepts(course,data);
   const examD=course.examDate?daysTo(course.examDate):null;
+  // v13.2: Knowledge Coverage (đã CHẠM tới bao nhiêu concept, bất kể mastery) +
+  // Exam Coverage (mastery trung bình CÓ TRỌNG SỐ theo Exam Weight — chỉ tính
+  // trên các concept đã gán Exam Weight, vì "sẵn sàng cho kỳ thi" không có ý
+  // nghĩa với những concept chưa từng đánh giá độ quan trọng).
+  const knowledgeCoverage=concepts.length?Math.round(concepts.filter(c=>(c.touches||[]).length>0).length/concepts.length*100):null;
+  const weightedConcepts=concepts.filter(c=>c.examWeight>0);
+  const examCoverage=weightedConcepts.length
+    ?Math.round(weightedConcepts.reduce((s,c)=>s+c.examWeight*calcProgress(c,data),0)/weightedConcepts.reduce((s,c)=>s+c.examWeight*100,0)*100)
+    :null;
 
   const addConcept=(f)=>onUpdate({concepts:[...concepts,f]});
   const addConceptsBulk=(chapterId,titles)=>{
@@ -1504,6 +1554,10 @@ function CourseDetail({course,data,upd,awardXP,onBack,onUpdate,onDelete}){
         <span style={{fontWeight:700,color:course.color}}>{progress}%</span>
         {examD!==null&&<span style={{fontSize:11,color:examD<=7?'var(--cr)':'var(--mu)',fontWeight:600}}>còn {examD} ngày đến thi</span>}
       </div>
+      {(knowledgeCoverage!==null||examCoverage!==null)&&<div style={{display:'flex',gap:14,marginTop:8,fontSize:11}}>
+        {knowledgeCoverage!==null&&<span className="tx-mu">📊 Đã học: <strong style={{color:'var(--tx)'}}>{concepts.filter(c=>(c.touches||[]).length>0).length}/{concepts.length}</strong> concept</span>}
+        {examCoverage!==null&&<span className="tx-mu">🎯 Exam Coverage: <strong style={{color:examCoverage>=70?'var(--su)':examCoverage>=40?'var(--wa)':'var(--cr)'}}>{examCoverage}%</strong></span>}
+      </div>}
       {weak.length>0&&<div style={{marginTop:8,fontSize:11,color:'var(--cr)'}}>🔴 {weak.length} concept cần ôn gấp (Review Priority cao)</div>}
       {course.note&&<div style={{marginTop:8,fontSize:11,color:'var(--mu)',background:'var(--sur)',borderRadius:6,padding:'6px 8px'}}>{course.note}</div>}
     </div>

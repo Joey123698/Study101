@@ -1062,6 +1062,6 @@ function StudyJournalPage({data,upd,awardXP}){
         </div>;})}
     </div>
 
-    {editSession&&<SessionEditorModal session={editSession.session} concepts={editSession.course.concepts||[]} onSave={saveEditedSession} onClose={()=>setEditSession(null)}/>}
+    {editSession&&<SessionEditorModal session={editSession.session} concepts={editSession.course.concepts||[]} objectiveLibrary={editSession.course.objectiveLibrary||[]} onUpdateLibrary={(lib)=>updCourse(editSession.course.id,{objectiveLibrary:lib})} onSave={saveEditedSession} onClose={()=>setEditSession(null)}/>}
     {editEntry&&<EditJournalEntryModal entry={editEntry} concepts={(data.courses.find(c=>c.id===editEntry.courseId)?.concepts)||[]} onSave={saveEditedEntry} onClose={()=>setEditEntry(null)}/>}
   </div>;}
